@@ -1,0 +1,10 @@
+fastapi>=0.104.1
+uvicorn>=0.24.0
+semantic-kernel>=0.4.0
+python-dotenv>=1.0.0
+pyodbc>=4.0.39
+pandas>=2.1.1
+nest-asyncio>=1.5.8
+azure-identity>=1.14.1
+streamlit>=1.28.0
+requests>=2.31.0

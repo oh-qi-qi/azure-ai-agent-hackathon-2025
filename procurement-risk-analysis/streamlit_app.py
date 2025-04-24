@@ -1,3 +1,5 @@
+"""Streamlit UI for the equipment schedule agent."""
+
 import streamlit as st
 import requests
 import json
@@ -12,18 +14,18 @@ import pyodbc
 import sys
 import importlib.util
 
-# Import our agent implementation if it exists in the same directory
-agent_module = None
-try:
-    # Assuming the agent implementation is in equipment_agent.py
-    spec = importlib.util.spec_from_file_location("equipment_agent", "equipment_agent.py")
-    agent_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(agent_module)
-except Exception as e:
-    st.error(f"Could not load agent module: {e}")
-
 # Load environment variables
 dotenv.load_dotenv()
+
+# Try to import modules from our application
+try:
+    from config.settings import get_database_connection_string
+    from managers.chatbot_manager import ChatbotManager
+    from managers.scheduler import WorkflowScheduler
+    modules_imported = True
+except ImportError:
+    modules_imported = False
+    st.warning("Could not import modules directly. Will try to use API or direct module loading.")
 
 # Initialize session state
 if "chat_history" not in st.session_state:
@@ -38,26 +40,67 @@ if "session_id" not in st.session_state:
 if "api_running" not in st.session_state:
     st.session_state.api_running = False
 
-# Function to directly run the workflow without API
-def run_workflow_directly():
-    if agent_module:
-        # Apply nest_asyncio to allow running asyncio in Streamlit
-        nest_asyncio.apply()
+# Function to clear input
+def clear_input():
+    st.session_state.user_message = ""
+
+# Function to dynamically load the scheduler module
+def load_scheduler_module():
+    if modules_imported:
+        connection_string = get_database_connection_string()
+        return WorkflowScheduler(connection_string)
+    
+    # Try to import the module dynamically
+    try:
+        spec = importlib.util.spec_from_file_location("managers.scheduler", "managers/scheduler.py")
+        scheduler_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(scheduler_module)
         
-        # Create a workflow scheduler
         connection_string = os.getenv("DB_CONNECTION_STRING")
         if not connection_string:
             st.error("DB_CONNECTION_STRING environment variable not set")
             return None
             
-        workflow_scheduler = agent_module.WorkflowScheduler(connection_string)
+        return scheduler_module.WorkflowScheduler(connection_string)
+    except Exception as e:
+        st.error(f"Could not load scheduler module: {e}")
+        return None
+
+# Function to dynamically load the chatbot module
+def load_chatbot_module():
+    if modules_imported:
+        connection_string = get_database_connection_string()
+        return ChatbotManager(connection_string)
+    
+    # Try to import the module dynamically
+    try:
+        spec = importlib.util.spec_from_file_location("managers.chatbot_manager", "managers/chatbot_manager.py")
+        chatbot_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(chatbot_module)
+        
+        connection_string = os.getenv("DB_CONNECTION_STRING")
+        if not connection_string:
+            st.error("DB_CONNECTION_STRING environment variable not set")
+            return None
+            
+        return chatbot_module.ChatbotManager(connection_string)
+    except Exception as e:
+        st.error(f"Could not load chatbot module: {e}")
+        return None
+
+# Function to directly run the workflow without API
+def run_workflow_directly():
+    workflow_scheduler = load_scheduler_module()
+    if workflow_scheduler:
+        # Apply nest_asyncio to allow running asyncio in Streamlit
+        nest_asyncio.apply()
         
         # Run the workflow
         with st.spinner("Running workflow analysis..."):
             result = workflow_scheduler.run_now()
             return result
     else:
-        st.error("Agent module not loaded. Make sure equipment_agent.py is in the same directory.")
+        st.error("Could not load workflow scheduler. Make sure all modules are properly installed.")
         return None
 
 # Function to check database connection
@@ -99,7 +142,7 @@ def send_chat_message_api(message):
         response = requests.post(
             "http://localhost:8000/chat",
             json={"session_id": st.session_state.session_id, "message": message},
-            timeout=60
+            timeout=240
         )
         return response.json()
     except Exception as e:
@@ -107,16 +150,13 @@ def send_chat_message_api(message):
 
 # Function to send a chat message directly
 def send_chat_message_direct(message):
-    if agent_module:
+    chatbot_manager = load_chatbot_module()
+    if chatbot_manager:
+        # Store the chatbot manager in session state for cleanup later
+        st.session_state.chatbot_manager = chatbot_manager
+        
         # Apply nest_asyncio to allow running asyncio in Streamlit
         nest_asyncio.apply()
-        
-        # Create a chatbot manager
-        connection_string = os.getenv("DB_CONNECTION_STRING")
-        if not connection_string:
-            return {"status": "error", "error": "DB_CONNECTION_STRING environment variable not set"}
-            
-        chatbot_manager = agent_module.ChatbotManager(connection_string)
         
         # Process the message
         loop = asyncio.get_event_loop()
@@ -125,7 +165,37 @@ def send_chat_message_direct(message):
         )
         return response
     else:
-        return {"status": "error", "error": "Agent module not loaded"}
+        return {"status": "error", "error": "Could not load chatbot manager"}
+
+# Function to handle message sending and processing
+def process_message():
+    # Get message from session state
+    user_message = st.session_state.user_message
+    
+    if not user_message:
+        return
+        
+    # Add user message to chat history
+    st.session_state.chat_history.append({"role": "user", "content": user_message})
+    
+    # Process message via API or directly
+    api_mode = st.session_state.get("api_mode", False)
+    
+    with st.spinner("Assistant is thinking..."):
+        if api_mode:
+            response = send_chat_message_api(user_message)
+        else:
+            response = send_chat_message_direct(user_message)
+    
+    if response.get("status") == "success":
+        assistant_message = response.get("response", "No response")
+        # Add assistant message to chat history
+        st.session_state.chat_history.append({"role": "assistant", "content": assistant_message})
+    else:
+        st.error(f"Error: {response.get('error', 'Unknown error')}")
+    
+    # Clear the input box (safely)
+    st.session_state.user_message = ""
 
 # Streamlit interface
 st.title("Equipment Schedule Agent")
@@ -148,10 +218,10 @@ with st.sidebar:
     
     # Run as API option
     st.subheader("API Mode")
-    api_mode = st.checkbox("Use API Mode", value=False)
-    if api_mode and not st.session_state.api_running:
+    st.session_state.api_mode = st.checkbox("Use API Mode", value=False)
+    if st.session_state.api_mode:
         st.warning("You'll need to run the API server separately:")
-        st.code("python equipment_agent.py", language="bash")
+        st.code("python main.py", language="bash")
     
     # Divider
     st.divider()
@@ -173,45 +243,15 @@ with tab1:
         if message["role"] == "user":
             st.markdown(f"**You:** {message['content']}")
         else:
-            content = message["content"]
-            # Remove the "ASSISTANT > " prefix if it exists
-            if content.startswith("ASSISTANT > "):
-                content = content[12:]
-            st.markdown(f"**Assistant:** {content}")
+            st.markdown(f"**Assistant:** {message['content']}")
     
-    # Input for new message
-    user_message = st.text_input("Type your message here:", key="user_message")
+    # Input for new message with on_change callback
+    user_message = st.text_input("Type your message here:", key="user_message", on_change=process_message)
     
-    if st.button("Send", key="send_button") and user_message:
-        # Add user message to chat history
-        st.session_state.chat_history.append({"role": "user", "content": user_message})
-        
-        # Display the message immediately
-        st.markdown(f"**You:** {user_message}")
-        
-        # Process message via API or directly
-        with st.spinner("Assistant is thinking..."):
-            if api_mode:
-                response = send_chat_message_api(user_message)
-            else:
-                response = send_chat_message_direct(user_message)
-        
-        if response.get("status") == "success":
-            assistant_message = response.get("response", "No response")
-            # Remove the "ASSISTANT > " prefix if it exists
-            if assistant_message.startswith("ASSISTANT > "):
-                assistant_message = assistant_message[12:]
-            
-            # Add assistant message to chat history
-            st.session_state.chat_history.append({"role": "assistant", "content": assistant_message})
-            
-            # Display the message
-            st.markdown(f"**Assistant:** {assistant_message}")
-        else:
-            st.error(f"Error: {response.get('error', 'Unknown error')}")
-        
-        # Clear the input box
-        st.session_state.user_message = ""
+    # Optional send button (the text_input will also trigger on Enter)
+    if st.button("Send", key="send_button"):
+        if st.session_state.user_message:  # Only process if there's text
+            process_message()
 
 # Tab 2: Schedule Analysis
 with tab2:
@@ -221,7 +261,7 @@ with tab2:
     if st.button("Run Analysis Now"):
         # Run analysis via API or directly
         with st.spinner("Running schedule analysis..."):
-            if api_mode:
+            if st.session_state.get("api_mode", False):
                 try:
                     response = requests.post("http://localhost:8000/workflow/run", timeout=120)
                     st.session_state.workflow_results = response.json()
@@ -285,10 +325,10 @@ with tab3:
     st.text(f"Python Version: {sys.version}")
     st.text(f"Current Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    if agent_module:
-        st.text("Agent Module: Loaded successfully")
+    if modules_imported:
+        st.text("Modules: Loaded successfully")
     else:
-        st.text("Agent Module: Not loaded")
+        st.text("Modules: Not loaded directly")
     
     # Database query test
     if st.button("Test Database Query"):
@@ -321,6 +361,44 @@ with tab3:
             except Exception as e:
                 st.error(f"Database query failed: {str(e)}")
 
+    # Add this to your streamlit_app.py in the System Status tab
+    if "workflow_results" in st.session_state and st.session_state.workflow_results:
+        workflow_run_id = st.session_state.workflow_results.get("workflow_run_id")
+        if workflow_run_id and st.button("View Agent Thinking Logs"):
+            from plugins.schedule_plugin import EquipmentSchedulePlugin
+            connection_string = os.getenv("DB_CONNECTION_STRING")
+            plugin = EquipmentSchedulePlugin(connection_string)
+            logs_json = plugin.get_agent_thinking_logs(workflow_run_id)
+            logs = json.loads(logs_json)
+            
+            if logs:
+                st.subheader("Agent Thinking Logs")
+                for log in logs:
+                    with st.expander(f"{log['agent_name']} - {log['thinking_stage']} ({log['created_date']})"):
+                        st.write(log['thought_content'])
+            else:
+                st.info("No thinking logs found for this run")
+
 # Footer
 st.divider()
 st.caption("Equipment Schedule Agent v1.0 | Built with Streamlit and Semantic Kernel")
+
+# Add session cleanup function
+def cleanup_resources():
+    """Clean up any resources when the app is done."""
+    if "chatbot_manager" in st.session_state:
+        chatbot_manager = st.session_state.chatbot_manager
+        if hasattr(chatbot_manager, "cleanup_sessions") and callable(chatbot_manager.cleanup_sessions):
+            # Apply nest_asyncio to allow running asyncio in Streamlit
+            nest_asyncio.apply()
+            # Run the cleanup
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(chatbot_manager.cleanup_sessions(max_age_minutes=0))
+            print("Cleaned up chat sessions")
+
+
+# Main entry point
+if __name__ == "__main__":
+    # Register the cleanup function to run when Streamlit is done
+    import atexit
+    atexit.register(cleanup_resources)
