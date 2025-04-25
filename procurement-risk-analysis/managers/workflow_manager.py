@@ -2,6 +2,7 @@
 
 import os
 import uuid
+import asyncio
 
 from azure.identity.aio import DefaultAzureCredential
 from semantic_kernel.agents import AgentGroupChat
@@ -21,6 +22,7 @@ from agents.agent_strategies import (
 from agents.agent_manager import create_or_reuse_agent
 from plugins.schedule_plugin import EquipmentSchedulePlugin
 from plugins.risk_plugin import RiskCalculationPlugin
+from plugins.thinking_logger_plugin import ThinkingLoggerPlugin
 
 class AutomatedWorkflowManager:
     """Manages the automated workflow for schedule analysis."""
@@ -29,6 +31,7 @@ class AutomatedWorkflowManager:
         self.connection_string = connection_string
         self.schedule_plugin = EquipmentSchedulePlugin(connection_string)
         self.risk_plugin = RiskCalculationPlugin()
+        self.thinking_logger = ThinkingLoggerPlugin(connection_string)
     
     async def run_workflow(self):
         """Runs the automated workflow for schedule analysis."""
@@ -47,9 +50,11 @@ class AutomatedWorkflowManager:
                 "workflow_run_id": str(uuid.uuid4())
             }
         
-        # Generate a workflow run ID
+        # Generate a workflow run ID and session ID
         workflow_run_id = str(uuid.uuid4())
+        session_id = str(uuid.uuid4())
         print(f"Workflow run ID: {workflow_run_id}")
+        print(f"Session ID: {session_id}")
         
         # Log workflow start
         try:
@@ -57,7 +62,7 @@ class AutomatedWorkflowManager:
                 agent_name="Orchestrator",
                 action="Start Workflow",
                 result_summary="Starting equipment schedule analysis workflow",
-                agent_run_id=workflow_run_id
+                conversation_id=workflow_run_id
             )
             print("Logged workflow start event")
         except Exception as e:
@@ -81,19 +86,31 @@ class AutomatedWorkflowManager:
                     agent_name=SCHEDULER_AGENT,
                     model_deployment_name=ai_agent_settings.model_deployment_name,
                     instructions=SCHEDULER_AGENT_INSTRUCTIONS,
-                    plugins=[self.schedule_plugin, self.risk_plugin]
+                    plugins=[self.schedule_plugin, self.risk_plugin, self.thinking_logger]  # Include thinking logger here
                 )
-                print(f"Scheduler agent ready: {scheduler_agent.name}")
-                
+
                 # Create or reuse the reporting agent
                 reporting_agent = await create_or_reuse_agent(
                     client=client,
                     agent_name=REPORTING_AGENT,
                     model_deployment_name=ai_agent_settings.model_deployment_name,
                     instructions=REPORTING_AGENT_INSTRUCTIONS,
-                    plugins=[self.schedule_plugin]
+                    plugins=[self.schedule_plugin, self.thinking_logger]  # Include thinking logger here
                 )
-                print(f"Reporting agent ready: {reporting_agent.name}")
+                
+                # Get agent IDs
+                scheduler_agent_id = None
+                reporting_agent_id = None
+                
+                # Extract IDs if available
+                if hasattr(scheduler_agent, 'definition') and hasattr(scheduler_agent.definition, 'id'):
+                    scheduler_agent_id = scheduler_agent.definition.id
+                if hasattr(reporting_agent, 'definition') and hasattr(reporting_agent.definition, 'id'):
+                    reporting_agent_id = reporting_agent.definition.id
+                
+                print(f"Scheduler agent ready: {scheduler_agent.name} (ID: {scheduler_agent_id})")
+                print(f"Reporting agent ready: {reporting_agent.name} (ID: {reporting_agent_id})")
+                
                 
                 # Create the agent group chat
                 print("Creating agent group chat")
@@ -103,11 +120,17 @@ class AutomatedWorkflowManager:
                     selection_strategy=AutomatedWorkflowSelectionStrategy()
                 )
                 
-                # Start the workflow with initial instruction
+                # Start the workflow with initial instruction that includes thinking context
                 print("Creating initial message")
                 initial_message = ChatMessageContent(
                     role=AuthorRole.USER, 
-                    content=f"USER > Please analyze the equipment schedule data and generate a risk report."
+                    content=f"""USER > Please analyze the equipment schedule data and generate a risk report.
+                    
+                    When logging your thinking with log_agent_thinking, use these parameters:
+                    - conversation_id: "{workflow_run_id}"
+                    - session_id: "{session_id}"
+                    - model_deployment_name: "{ai_agent_settings.model_deployment_name}"
+                    """
                 )
                 
                 # Add the initial message to start the chat
@@ -143,7 +166,7 @@ class AutomatedWorkflowManager:
                             agent_name="Orchestrator",
                             action="Complete Workflow",
                             result_summary="Equipment schedule analysis workflow completed successfully",
-                            agent_run_id=workflow_run_id
+                            conversation_id=workflow_run_id
                         )
                     except Exception as e:
                         print(f"Error logging workflow completion: {e}")
@@ -166,7 +189,7 @@ class AutomatedWorkflowManager:
                             agent_name="Orchestrator",
                             action="Workflow Error",
                             result_summary=f"Error during workflow execution: {str(e)}",
-                            agent_run_id=workflow_run_id
+                            conversation_id=workflow_run_id
                         )
                     except Exception as log_error:
                         print(f"Failed to log workflow error: {log_error}")
@@ -194,7 +217,7 @@ class AutomatedWorkflowManager:
                     agent_name="Orchestrator",
                     action="Workflow Setup Error",
                     result_summary=f"Error setting up workflow: {str(e)}",
-                    agent_run_id=workflow_run_id
+                    conversation_id=workflow_run_id
                 )
             except Exception as log_error:
                 print(f"Failed to log setup error: {log_error}")

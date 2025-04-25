@@ -131,7 +131,7 @@ class EquipmentSchedulePlugin:
     # def log_schedule_variance(self, project_id: int, equipment_id: int, work_package_id: int, 
     #                         milestone_id: int, p6_due_date: str, equipment_delivery_date: str, 
     #                         days_variance: int, risk_flag: str, risk_description: str, 
-    #                         mitigation_action: str, agent_run_id: str) -> str:
+    #                         mitigation_action: str, conversation_id: str) -> str:
     #     """Logs a schedule variance to the database"""
     #     try:
     #         # Connect to database
@@ -141,7 +141,7 @@ class EquipmentSchedulePlugin:
     #         # Prepare parameters for stored procedure
     #         params = (project_id, equipment_id, work_package_id, milestone_id, 
     #                 p6_due_date, equipment_delivery_date, days_variance,
-    #                 risk_flag, risk_description, mitigation_action, agent_run_id)
+    #                 risk_flag, risk_description, mitigation_action, conversation_id)
             
     #         # Execute stored procedure with output parameter
     #         cursor.execute("""
@@ -179,7 +179,7 @@ class EquipmentSchedulePlugin:
             variances = json.loads(variances_json)
             
             # Generate a run ID for this batch
-            agent_run_id = str(uuid.uuid4())
+            conversation_id = str(uuid.uuid4())
             
             # Track results
             results = []
@@ -211,7 +211,7 @@ class EquipmentSchedulePlugin:
                         risk_flag=risk_flag,
                         risk_description=risk_description,
                         mitigation_action=mitigation_action,
-                        agent_run_id=agent_run_id
+                        conversation_id=conversation_id
                     )
                     
                     # Parse the result
@@ -231,7 +231,7 @@ class EquipmentSchedulePlugin:
             
             # Return the batch results
             return json.dumps({
-                'agent_run_id': agent_run_id,
+                'conversation_id': conversation_id,
                 'total_processed': len(variances),
                 'results': results
             })
@@ -240,19 +240,19 @@ class EquipmentSchedulePlugin:
     
     @kernel_function(description="Logs an agent event for observability")
     def log_agent_event(self, agent_name: str, action: str, result_summary: str, 
-                       project_id: int = None, agent_run_id: str = None) -> str:
+                       project_id: int = None, conversation_id: str = None) -> str:
         """Logs an agent event to the database"""
         try:
             # Connect to database
             conn = pyodbc.connect(self.connection_string)
             cursor = conn.cursor()
             
-            # Use existing agent_run_id or create a new one
-            if not agent_run_id:
-                agent_run_id = str(uuid.uuid4())
+            # Use existing conversation_id or create a new one
+            if not conversation_id:
+                conversation_id = str(uuid.uuid4())
             
             # Prepare parameters for stored procedure
-            params = (agent_name, action, project_id, result_summary, agent_run_id)
+            params = (agent_name, action, project_id, result_summary, conversation_id)
             
             # Execute stored procedure
             cursor.execute("EXEC sp_LogAgentEvent ?, ?, ?, ?, ?", params)
@@ -262,43 +262,13 @@ class EquipmentSchedulePlugin:
             cursor.close()
             conn.close()
             
-            # Return success message with the agent_run_id
-            return json.dumps({"success": True, "agent_run_id": agent_run_id})
+            # Return success message with the conversation_id
+            return json.dumps({"success": True, "conversation_id": conversation_id})
             
         except Exception as e:
             return json.dumps({"error": str(e)})
 
-    @kernel_function(description="Log the agent's thinking process")
-    def log_agent_thinking(self, agent_name: str, thinking_stage: str, thought_content: str, agent_run_id: str = None) -> str:
-        """Logs the agent's thinking process to the database"""
-        try:
-            # Connect to database
-            conn = pyodbc.connect(self.connection_string)
-            cursor = conn.cursor()
-            
-            # Use existing agent_run_id or create a new one
-            if not agent_run_id:
-                agent_run_id = str(uuid.uuid4())
-            
-            # Execute insert query
-            cursor.execute("""
-                INSERT INTO dim_agent_thinking_log 
-                (agent_name, thinking_stage, thought_content, agent_run_id, created_date)
-                VALUES (?, ?, ?, ?, GETDATE())
-            """, (agent_name, thinking_stage, thought_content, agent_run_id))
-            
-            # Commit and close connection
-            conn.commit()
-            cursor.close()
-            conn.close()
-            
-            return json.dumps({"success": True, "agent_run_id": agent_run_id})
-            
-        except Exception as e:
-            return json.dumps({"error": str(e)})
-    
-    @kernel_function(description="Retrieve agent thinking logs for an analysis run")
-    def get_agent_thinking_logs(self, agent_run_id: str) -> str:
+   
         """Retrieves the agent thinking logs for a specific run"""
         try:
             # Connect to database
@@ -309,9 +279,9 @@ class EquipmentSchedulePlugin:
             cursor.execute("""
                 SELECT thinking_id, agent_name, thinking_stage, thought_content, created_date
                 FROM dim_agent_thinking_log
-                WHERE agent_run_id = ?
+                WHERE conversation_id = ?
                 ORDER BY created_date
-            """, (agent_run_id,))
+            """, (conversation_id,))
             
             # Fetch results
             columns = [column[0] for column in cursor.description]
