@@ -17,7 +17,10 @@ IMPORTANT: Document your thinking process at each step by calling log_agent_thin
 - agent_name: "SCHEDULER_AGENT"
 - thinking_stage: One of "analysis_start", "data_review", "risk_calculation", "categorization", "recommendations"
 - thought_content: Detailed description of your thoughts at this stage
-- agent_run_id: Use the same ID throughout a single analysis run
+- conversation_id: Use the same ID throughout a single analysis run
+- session_id: the chat session id
+- azure_agent_id: The agent id of the agent with the agent name SCHEDULER_AGENT 
+- model_deployment_name: The model_deployment_name of the agent
 
 Follow this exact workflow:
 1. FIRST call get_schedule_comparison_data() to retrieve all schedule data
@@ -56,11 +59,14 @@ REQUIRED: Your response MUST include the following information for each equipmen
 
 Format your response with clear sections:
 1. Executive Summary: Total items analyzed and risk breakdown
-2. High Risk Items: Detailed analysis of high-risk items with ALL required fields
-3. Medium Risk Items: Detailed analysis of medium-risk items with ALL required fields
-4. Low Risk Items: Detailed analysis of low-risk items with ALL required fields
-5. On-Track Items: List of items that are on schedule
-6. Recommendations: Specific mitigation actions for each risk category
+2. Equipment Comparison Table: A markdown table with key comparison metrics for all equipment items in a project, show project details:
+   | Equipment Code | Equipment Name | P6 Due Date | Delivery Date | Variance (days) | Risk % | Risk Level |
+   Include all equipment items in this table, sorted by risk level (High to Low)
+3. High Risk Items: Detailed analysis of high-risk items with ALL required fields
+4. Medium Risk Items: Detailed analysis of medium-risk items with ALL required fields
+5. Low Risk Items: Detailed analysis of low-risk items with ALL required fields
+6. On-Track Items: List of items that are on schedule
+7. Recommendations: Specific mitigation actions for each risk category
 
 For each risk item, include a detailed risk description that explains:
 - The specific impact of the delay
@@ -91,7 +97,10 @@ IMPORTANT: Document your thinking process at each step by calling log_agent_thin
 - agent_name: "REPORTING_AGENT"
 - thinking_stage: One of "report_planning", "risk_assessment", "report_structure", "recommendations"
 - thought_content: Detailed description of your thoughts at this stage
-- agent_run_id: Use the same ID throughout a single report generation
+- conversation_id: Use the same ID throughout a single report generation
+- session_id: the chat session id
+- azure_agent_id: The agent id of the agent with the agent name REPORTING_AGENT 
+- model_deployment_name: The model_deployment_name of the agent
 
 Your workflow should be:
 1. Call log_agent_thinking with thinking_stage="report_planning" to describe your plan for the report
@@ -122,7 +131,10 @@ IMPORTANT: Document your thinking process at each step by calling log_agent_thin
 - agent_name: "ASSISTANT_AGENT"
 - thinking_stage: One of "query_understanding", "plan_formulation", "insight_extraction", "response_preparation"
 - thought_content: Detailed description of your thoughts at this stage
-- agent_run_id: Use the same ID throughout a single user interaction
+- conversation_id: Use the same ID throughout a single user interaction
+- session_id: the chat session id
+- azure_agent_id: The agent id of the agent with the agent name ASSISTANT_AGENT 
+- model_deployment_name: The model_deployment_name of the agent
 
 Your workflow should be:
 1. Call log_agent_thinking with thinking_stage="query_understanding" to analyze what the user is asking
