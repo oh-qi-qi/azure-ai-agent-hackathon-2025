@@ -127,44 +127,6 @@ class EquipmentSchedulePlugin:
         except Exception as e:
             return json.dumps({"error": str(e)})
     
-    # @kernel_function(description="Logs a schedule variance detected by the agent")
-    # def log_schedule_variance(self, project_id: int, equipment_id: int, work_package_id: int, 
-    #                         milestone_id: int, p6_due_date: str, equipment_delivery_date: str, 
-    #                         days_variance: int, risk_flag: str, risk_description: str, 
-    #                         mitigation_action: str, conversation_id: str) -> str:
-    #     """Logs a schedule variance to the database"""
-    #     try:
-    #         # Connect to database
-    #         conn = pyodbc.connect(self.connection_string)
-    #         cursor = conn.cursor()
-            
-    #         # Prepare parameters for stored procedure
-    #         params = (project_id, equipment_id, work_package_id, milestone_id, 
-    #                 p6_due_date, equipment_delivery_date, days_variance,
-    #                 risk_flag, risk_description, mitigation_action, conversation_id)
-            
-    #         # Execute stored procedure with output parameter
-    #         cursor.execute("""
-    #             DECLARE @variance_id INT;
-    #             EXEC sp_LogScheduleVariance ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, @variance_id OUTPUT;
-    #             SELECT @variance_id AS variance_id;
-    #         """, params)
-            
-    #         # Get the variance_id
-    #         result = cursor.fetchone()
-    #         variance_id = result.variance_id if result else None
-            
-    #         # Commit and close connection
-    #         conn.commit()
-    #         cursor.close()
-    #         conn.close()
-            
-    #         # Return success message with the variance_id
-    #         return json.dumps({"success": True, "variance_id": variance_id})
-            
-    #     except Exception as e:
-    #         return json.dumps({"error": str(e)})
-    
     @kernel_function(description="Logs multiple schedule variances in a batch")
     def log_schedule_variances_batch(self, variances_json: str) -> str:
         """Logs multiple schedule variances from a JSON array of variance objects
@@ -298,6 +260,79 @@ class EquipmentSchedulePlugin:
             
             # Return as JSON string
             return json.dumps(logs, default=str)
+            
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+    
+    @kernel_function(description="Retrieves agent thinking logs for a specific run")
+    def get_agent_thinking_logs(self, conversation_id: str) -> str:
+        """Retrieves the agent thinking logs for a specific run"""
+        try:
+            # Connect to database
+            conn = pyodbc.connect(self.connection_string)
+            cursor = conn.cursor()
+            
+            # Execute query
+            cursor.execute("""
+                SELECT thinking_id, agent_name, thinking_stage, thought_content, created_date
+                FROM dim_agent_thinking_log
+                WHERE conversation_id = ?
+                ORDER BY created_date
+            """, (conversation_id,))
+            
+            # Fetch results
+            columns = [column[0] for column in cursor.description]
+            rows = cursor.fetchall()
+            
+            # Convert to list of dictionaries
+            logs = []
+            for row in rows:
+                logs.append(dict(zip(columns, row)))
+            
+            # Close connection
+            cursor.close()
+            conn.close()
+            
+            # Return as JSON string
+            return json.dumps(logs, default=str)
+            
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    @kernel_function(description="Logs a schedule variance detected by the agent")
+    def log_schedule_variance(self, project_id: int, equipment_id: int, work_package_id: int, 
+                            milestone_id: int, p6_due_date: str, equipment_delivery_date: str, 
+                            days_variance: int, risk_flag: str, risk_description: str, 
+                            mitigation_action: str, conversation_id: str) -> str:
+        """Logs a schedule variance to the database"""
+        try:
+            # Connect to database
+            conn = pyodbc.connect(self.connection_string)
+            cursor = conn.cursor()
+            
+            # Prepare parameters for stored procedure
+            params = (project_id, equipment_id, work_package_id, milestone_id, 
+                    p6_due_date, equipment_delivery_date, days_variance,
+                    risk_flag, risk_description, mitigation_action, conversation_id)
+            
+            # Execute stored procedure with output parameter
+            cursor.execute("""
+                DECLARE @variance_id INT;
+                EXEC sp_LogScheduleVariance ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, @variance_id OUTPUT;
+                SELECT @variance_id AS variance_id;
+            """, params)
+            
+            # Get the variance_id
+            result = cursor.fetchone()
+            variance_id = result.variance_id if result else None
+            
+            # Commit and close connection
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            # Return success message with the variance_id
+            return json.dumps({"success": True, "variance_id": variance_id})
             
         except Exception as e:
             return json.dumps({"error": str(e)})

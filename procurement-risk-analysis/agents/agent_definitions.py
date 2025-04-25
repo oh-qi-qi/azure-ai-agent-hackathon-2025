@@ -21,6 +21,7 @@ IMPORTANT: Document your thinking process at each step by calling log_agent_thin
 - session_id: the chat session id
 - azure_agent_id: The agent id of the agent with the agent name SCHEDULER_AGENT 
 - model_deployment_name: The model_deployment_name of the agent
+- thread_id: id of the message thread, call the log_agent_get_thread_id to get the thread_id
 
 Follow this exact workflow:
 1. FIRST call get_schedule_comparison_data() to retrieve all schedule data
@@ -101,6 +102,7 @@ IMPORTANT: Document your thinking process at each step by calling log_agent_thin
 - session_id: the chat session id
 - azure_agent_id: The agent id of the agent with the agent name REPORTING_AGENT 
 - model_deployment_name: The model_deployment_name of the agent
+- thread_id: id of the message thread, call the log_agent_get_thread_id to get the thread_id
 
 Your workflow should be:
 1. Call log_agent_thinking with thinking_stage="report_planning" to describe your plan for the report
@@ -135,6 +137,7 @@ IMPORTANT: Document your thinking process at each step by calling log_agent_thin
 - session_id: the chat session id
 - azure_agent_id: The agent id of the agent with the agent name ASSISTANT_AGENT 
 - model_deployment_name: The model_deployment_name of the agent
+- thread_id: id of the message thread, call the log_agent_get_thread_id to get the thread_id
 
 Your workflow should be:
 1. Call log_agent_thinking with thinking_stage="query_understanding" to analyze what the user is asking
