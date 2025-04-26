@@ -1,4 +1,4 @@
-"""Enhanced thinking logger plugin for tracking agent reasoning with more context."""
+"""Enhanced thinking logger plugin for tracking agent reasoning with more context and outputs."""
 
 import json
 import uuid
@@ -8,14 +8,14 @@ from semantic_kernel.functions.kernel_function_decorator import kernel_function
 from config.settings import get_project_client
 
 class EnhancedThinkingLoggerPlugin:
-    """An enhanced plugin for logging agent thinking processes with more contextual information."""
+    """An enhanced plugin for logging agent thinking processes with more contextual information and outputs."""
     
     def __init__(self, connection_string):
         self.connection_string = connection_string
     
     @kernel_function(description="Retrieve agent thread id")
     def log_agent_get_thread_id(self) -> str:
-        """Logs the agent's thinking process to the database with extended context
+        """Retrieves the latest thread ID
      
         Returns:
             latest thread id
@@ -32,16 +32,16 @@ class EnhancedThinkingLoggerPlugin:
             return thread_id
             
         except Exception as e:
-            print(f"Error logging agent thinking: {e}")
+            print(f"Error getting thread ID: {e}")
             return json.dumps({"error": str(e)})
 
-    @kernel_function(description="Log the agent's thinking process with extended context")
+    @kernel_function(description="Log the agent's thinking process with extended context and output")
     def log_agent_thinking(self, agent_name: str, thinking_stage: str, thought_content: str, 
                           conversation_id: str = None, session_id: str = None, 
                           azure_agent_id: str = None, model_deployment_name: str = None,
                           thread_id: str = None, user_query: str = None, 
-                          status: str = "success") -> str:
-        """Logs the agent's thinking process to the database with extended context
+                          agent_output: str = None, status: str = "success") -> str:
+        """Logs the agent's thinking process to the database with extended context and output
         
         Args:
             agent_name: Name of the agent (e.g., SCHEDULER_AGENT)
@@ -53,6 +53,7 @@ class EnhancedThinkingLoggerPlugin:
             model_deployment_name: Name of the model deployment
             thread_id: ID of the Azure thread for this conversation (if available)
             user_query: The original user query that initiated this thinking process
+            agent_output: The output/response that resulted from this thinking stage
             status: Status of this thinking step (success, error, rate_limited, etc.)
             
         Returns:
@@ -73,11 +74,11 @@ class EnhancedThinkingLoggerPlugin:
             # Execute insert query
             cursor.execute("""
                 INSERT INTO dim_agent_thinking_log_enhanced
-                (agent_name, thinking_stage, thought_content, conversation_id, 
+                (agent_name, thinking_stage, thought_content, agent_output, conversation_id, 
                 session_id, azure_agent_id, model_deployment_name, thread_id,
                 user_query, status, created_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE())
-            """, (agent_name, thinking_stage, thought_content, conversation_id, 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE())
+            """, (agent_name, thinking_stage, thought_content, agent_output, conversation_id, 
                   session_id, azure_agent_id, model_deployment_name, thread_id,
                   user_query, status))
             
@@ -175,7 +176,7 @@ class EnhancedThinkingLoggerPlugin:
             # Execute query
             query = f"""
                 SELECT TOP {limit} 
-                    thinking_id, agent_name, thinking_stage, thought_content, 
+                    thinking_id, agent_name, thinking_stage, thought_content, agent_output,
                     conversation_id, session_id, azure_agent_id, model_deployment_name, 
                     thread_id, user_query, status, created_date
                 FROM dim_agent_thinking_log_enhanced
@@ -220,6 +221,7 @@ class EnhancedThinkingLoggerPlugin:
                         agent_name VARCHAR(100) NOT NULL,
                         thinking_stage VARCHAR(50) NOT NULL,
                         thought_content NVARCHAR(MAX) NOT NULL,
+                        agent_output NVARCHAR(MAX) NULL,
                         conversation_id VARCHAR(100) NOT NULL,
                         session_id VARCHAR(100) NULL,
                         azure_agent_id VARCHAR(100) NULL,

@@ -153,62 +153,19 @@ def send_chat_message_direct(message):
     chatbot_manager = load_chatbot_module()
     if chatbot_manager:
         # Store the chatbot manager in session state for cleanup later
-        if "chatbot_manager" not in st.session_state:
-            st.session_state.chatbot_manager = chatbot_manager
+        st.session_state.chatbot_manager = chatbot_manager
         
         # Apply nest_asyncio to allow running asyncio in Streamlit
         nest_asyncio.apply()
         
         # Process the message
-        try:
-            loop = asyncio.get_event_loop()
-            response = loop.run_until_complete(
-                chatbot_manager.process_message(st.session_state.session_id, message)
-            )
-            return response
-        except Exception as e:
-            st.error(f"Error processing message: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            
-            # If the session is corrupted, create a new one
-            if "Rate limit is exceeded" in str(e):
-                st.warning("Rate limit exceeded. Please wait a moment before trying again.")
-                # Generate a new session ID to force session recreation
-                st.session_state.session_id = str(uuid.uuid4())
-            
-            return {
-                "status": "error", 
-                "error": f"Error: {str(e)}. Please try again in a moment."
-            }
+        loop = asyncio.get_event_loop()
+        response = loop.run_until_complete(
+            chatbot_manager.process_message(st.session_state.session_id, message)
+        )
+        return response
     else:
         return {"status": "error", "error": "Could not load chatbot manager"}
-
-# Add a function to reset the chat session if needed
-def reset_chat_session():
-    # Generate a new session ID
-    st.session_state.session_id = str(uuid.uuid4())
-    st.session_state.chat_history = []
-    
-    # Clean up any existing chatbot manager
-    if "chatbot_manager" in st.session_state:
-        try:
-            chatbot_manager = st.session_state.chatbot_manager
-            # Apply nest_asyncio to allow running asyncio in Streamlit
-            nest_asyncio.apply()
-            
-            # Run the cleanup in the event loop
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(
-                chatbot_manager.cleanup_sessions(max_age_minutes=0)
-            )
-        except Exception as e:
-            print(f"Error cleaning up sessions: {e}")
-        
-        # Remove the chatbot manager from session state
-        del st.session_state.chatbot_manager
-    
-    st.success("Chat session has been reset!")
 
 # Function to handle message sending and processing
 def process_message():
@@ -221,29 +178,24 @@ def process_message():
     # Add user message to chat history
     st.session_state.chat_history.append({"role": "user", "content": user_message})
     
-    # Clear the input box BEFORE processing (this is key to fixing the StreamlitAPIException)
-    # We store the message temporarily and clear the input right away
-    temp_message = user_message
-    st.session_state.user_message = ""
-    
     # Process message via API or directly
     api_mode = st.session_state.get("api_mode", False)
     
     with st.spinner("Assistant is thinking..."):
         if api_mode:
-            response = send_chat_message_api(temp_message)
+            response = send_chat_message_api(user_message)
         else:
-            response = send_chat_message_direct(temp_message)
+            response = send_chat_message_direct(user_message)
     
     if response.get("status") == "success":
         assistant_message = response.get("response", "No response")
         # Add assistant message to chat history
         st.session_state.chat_history.append({"role": "assistant", "content": assistant_message})
     else:
-        error_message = response.get('error', 'Unknown error')
-        st.error(f"Error: {error_message}")
-        # Add error message to chat history so user knows what happened
-        st.session_state.chat_history.append({"role": "assistant", "content": f"I encountered an error: {error_message}. Please try again."})
+        st.error(f"Error: {response.get('error', 'Unknown error')}")
+    
+    # Clear the input box (safely)
+    st.session_state.user_message = ""
 
 # Streamlit interface
 st.title("Equipment Schedule Agent")
@@ -274,21 +226,13 @@ with st.sidebar:
     # Divider
     st.divider()
     
-    # Chat management
-    st.subheader("Chat Management")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Clear Chat History"):
-            st.session_state.chat_history = []
-            st.success("Chat history cleared!")
-    with col2:
-        if st.button("Reset Chat Session"):
-            reset_chat_session()
-            
-    st.caption("Reset Chat Session will create a new session ID and clean up resources.")
+    # Clear data
+    if st.button("Clear Chat History"):
+        st.session_state.chat_history = []
+        st.success("Chat history cleared!")
 
 # Create tabs for different functionalities
-tab1, tab2, tab3, tab4 = st.tabs(["Chat", "Schedule Analysis", "System Status", "Thinking Logs"])
+tab1, tab2, tab3 = st.tabs(["Chat", "Schedule Analysis", "System Status"])
 
 # Tab 1: Chat Interface
 with tab1:
@@ -434,12 +378,6 @@ with tab3:
                         st.write(log['thought_content'])
             else:
                 st.info("No thinking logs found for this run")
-
-# Tab 4: Thinking Logs
-with tab4:
-    # Import and render the thinking log viewer
-    from utils.thinking_log_viewer import render_thinking_log_viewer
-    render_thinking_log_viewer()
 
 # Footer
 st.divider()

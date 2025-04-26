@@ -308,7 +308,7 @@ def render_stats_tab():
         # 4. Timeline of thinking steps
         if "created_date" in df.columns:
             # Resample by hour
-            df["hour"] = df["created_date"].dt.floor("H")
+            df.loc[:, "hour"] = df["created_date"].dt.floor("h")
             timeline = df.groupby("hour").size().reset_index()
             timeline.columns = ["Timestamp", "Count"]
             
@@ -320,7 +320,7 @@ def render_stats_tab():
         if "created_date" in df.columns and "status" in df.columns:
             error_df = df[df["status"] == "error"]
             if not error_df.empty:
-                error_df["hour"] = error_df["created_date"].dt.floor("H")
+                error_df.loc[:, "hour"] = error_df["created_date"].dt.floor("h")
                 error_timeline = error_df.groupby("hour").size().reset_index()
                 error_timeline.columns = ["Timestamp", "Count"]
                 

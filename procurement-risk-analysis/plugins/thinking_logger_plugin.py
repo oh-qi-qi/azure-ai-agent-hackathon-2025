@@ -1,4 +1,4 @@
-"""Thinking logger plugin for tracking agent reasoning. (Simple)"""
+"""Thinking logger plugin for tracking agent reasoning."""
 
 import json
 import uuid

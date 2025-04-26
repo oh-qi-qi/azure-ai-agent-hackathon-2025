@@ -61,7 +61,7 @@ BEGIN
 END;
 
 
-CREATE PROCEDURE sp_LogScheduleVariance
+CREATE OR ALTER PROCEDURE sp_LogScheduleVariance
     @project_id INT,
     @equipment_id INT,
     @work_package_id INT,
@@ -72,7 +72,7 @@ CREATE PROCEDURE sp_LogScheduleVariance
     @risk_flag VARCHAR(20),
     @risk_description VARCHAR(500),
     @mitigation_action VARCHAR(500),
-    @agent_run_id UNIQUEIDENTIFIER,
+    @conversation_id UNIQUEIDENTIFIER,
     @variance_id INT OUTPUT
 AS
 BEGIN
@@ -90,7 +90,7 @@ BEGIN
         risk_flag, 
         risk_description, 
         mitigation_action, 
-        agent_run_id
+        conversation_id
     )
     VALUES (
         @project_id,
@@ -103,7 +103,7 @@ BEGIN
         @risk_flag,
         @risk_description,
         @mitigation_action,
-        @agent_run_id
+        @conversation_id
     );
     
     -- Get the new variance_id
@@ -112,12 +112,12 @@ BEGIN
     RETURN @variance_id;
 END;
 
-CREATE PROCEDURE sp_LogAgentEvent
+CREATE OR ALTER PROCEDURE sp_LogAgentEvent
     @agent_name VARCHAR(100),
     @action VARCHAR(100),
     @project_id INT = NULL,
     @result_summary VARCHAR(1000),
-    @agent_run_id UNIQUEIDENTIFIER
+    @conversation_id UNIQUEIDENTIFIER
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -130,7 +130,7 @@ BEGIN
         action,
         project_id,
         result_summary,
-        agent_run_id
+        conversation_id
     )
     VALUES (
         NEWID(),
@@ -139,6 +139,6 @@ BEGIN
         @action,
         @project_id,
         @result_summary,
-        @agent_run_id
+        @conversation_id
     );
 END;

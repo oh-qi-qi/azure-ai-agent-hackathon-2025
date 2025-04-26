@@ -168,19 +168,6 @@ CREATE TABLE fact_schedule_variance (
     CONSTRAINT fk_schedule_variance_milestone FOREIGN KEY (milestone_id) REFERENCES dim_milestone(milestone_id)
 );
 
-CREATE TABLE dim_agent_event_log (
-    log_id INT IDENTITY(1,1) PRIMARY KEY,
-    event_id UNIQUEIDENTIFIER NOT NULL,
-    agent_name VARCHAR(100) NOT NULL,
-    event_time DATETIME NOT NULL,
-    action VARCHAR(100) NOT NULL,
-    project_id INT,
-    result_summary VARCHAR(1000),
-    conversation_id UNIQUEIDENTIFIER NOT NULL,
-    created_date DATETIME DEFAULT GETDATE(),
-    CONSTRAINT fk_agent_event_log_project FOREIGN KEY (project_id) REFERENCES dim_project(project_id)
-);
-
 -- New table for tracking notification history
 CREATE TABLE fact_risk_notification (
     notification_id INT IDENTITY(1,1) PRIMARY KEY,
@@ -208,6 +195,18 @@ CREATE TABLE fact_risk_action_item (
     modified_date DATETIME DEFAULT GETDATE(),
     CONSTRAINT fk_risk_action_item_variance FOREIGN KEY (variance_id) REFERENCES fact_schedule_variance(variance_id)
 );
+CREATE TABLE dim_agent_event_log (
+    log_id INT IDENTITY(1,1) PRIMARY KEY,
+    event_id UNIQUEIDENTIFIER NOT NULL,
+    agent_name VARCHAR(100) NOT NULL,
+    event_time DATETIME NOT NULL,
+    action VARCHAR(100) NOT NULL,
+    result_summary VARCHAR(1000) NULL,
+    user_query NVARCHAR(MAX) NULL,
+    agent_output NVARCHAR(MAX) NULL,
+    conversation_id UNIQUEIDENTIFIER NOT NULL,
+    created_date DATETIME DEFAULT GETDATE()
+);
 
 -- Create the table with all the fields we want
 CREATE TABLE dim_agent_thinking_log (
@@ -219,5 +218,21 @@ CREATE TABLE dim_agent_thinking_log (
     session_id VARCHAR(100) NULL,
     azure_agent_id VARCHAR(100) NULL,
     model_deployment_name VARCHAR(100) NULL,
+    created_date DATETIME DEFAULT GETDATE()
+);
+
+CREATE TABLE dim_agent_thinking_log_enhanced (
+    thinking_id INT IDENTITY(1,1) PRIMARY KEY,
+    agent_name VARCHAR(100) NOT NULL,
+    thinking_stage VARCHAR(50) NOT NULL,
+    thought_content NVARCHAR(MAX) NOT NULL,
+    agent_output NVARCHAR(MAX) NULL,  -- New column for agent output
+    conversation_id VARCHAR(100) NOT NULL,
+    session_id VARCHAR(100) NULL,
+    azure_agent_id VARCHAR(100) NULL,
+    model_deployment_name VARCHAR(100) NULL,
+    thread_id VARCHAR(100) NULL,
+    user_query NVARCHAR(MAX) NULL,
+    status VARCHAR(50) DEFAULT 'unknown',
     created_date DATETIME DEFAULT GETDATE()
 );

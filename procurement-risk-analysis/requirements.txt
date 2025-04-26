@@ -8,4 +8,8 @@ nest-asyncio>=1.5.8
 azure-identity>=1.14.1
 streamlit>=1.28.0
 requests>=2.31.0
+<<<<<<< Updated upstream
+=======
 azure-ai-projects==1.0.0b10
+plotly
+>>>>>>> Stashed changes
