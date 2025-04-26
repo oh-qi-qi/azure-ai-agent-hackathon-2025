@@ -1,16 +1,21 @@
-"""Chatbot manager for equipment schedule agent."""
+"""Updated Chatbot manager with enhanced thinking logging."""
 
 import uuid
 import asyncio
+import traceback
 from datetime import datetime
+import re
 
 from azure.identity.aio import DefaultAzureCredential
+
 from semantic_kernel.agents import AgentGroupChat
 from semantic_kernel.agents import AzureAIAgent
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.contents.utils.author_role import AuthorRole
 
 from config.settings import initialize_ai_agent_settings
+from config.settings import get_project_client
+
 from agents.agent_definitions import (
     SCHEDULER_AGENT, SCHEDULER_AGENT_INSTRUCTIONS,
     REPORTING_AGENT, REPORTING_AGENT_INSTRUCTIONS,
@@ -22,16 +27,16 @@ from agents.agent_strategies import (
 from agents.agent_manager import create_or_reuse_agent
 from plugins.schedule_plugin import EquipmentSchedulePlugin
 from plugins.risk_plugin import RiskCalculationPlugin
-from plugins.thinking_logger_plugin import ThinkingLoggerPlugin
+from plugins.enhanced_thinking_logger import EnhancedThinkingLoggerPlugin
 
 class ChatbotManager:
-    """Manages the interactive chatbot for user queries."""
+    """Manages the interactive chatbot for user queries with enhanced logging."""
     
     def __init__(self, connection_string):
         self.connection_string = connection_string
         self.schedule_plugin = EquipmentSchedulePlugin(connection_string)
         self.risk_plugin = RiskCalculationPlugin()
-        self.thinking_logger = ThinkingLoggerPlugin(connection_string)
+        self.thinking_logger = EnhancedThinkingLoggerPlugin(connection_string)
         self.chat_sessions = {}
     
     async def initialize_session(self, session_id):
@@ -67,7 +72,7 @@ class ChatbotManager:
                 agent_name=SCHEDULER_AGENT,
                 model_deployment_name=ai_agent_settings.model_deployment_name,
                 instructions=SCHEDULER_AGENT_INSTRUCTIONS,
-                plugins=[self.schedule_plugin, self.risk_plugin, self.thinking_logger]  # Include thinking logger here
+                plugins=[self.schedule_plugin, self.risk_plugin, self.thinking_logger]
             )
 
             print("Creating/retrieving reporting agent...")
@@ -76,7 +81,7 @@ class ChatbotManager:
                 agent_name=REPORTING_AGENT,
                 model_deployment_name=ai_agent_settings.model_deployment_name,
                 instructions=REPORTING_AGENT_INSTRUCTIONS,
-                plugins=[self.schedule_plugin, self.thinking_logger]  # Include thinking logger here
+                plugins=[self.schedule_plugin, self.thinking_logger]
             )
 
             print("Creating/retrieving assistant agent...")
@@ -85,7 +90,7 @@ class ChatbotManager:
                 agent_name=ASSISTANT_AGENT,
                 model_deployment_name=ai_agent_settings.model_deployment_name,
                 instructions=ASSISTANT_AGENT_INSTRUCTIONS,
-                plugins=[self.schedule_plugin, self.risk_plugin, self.thinking_logger]  # Include thinking logger here
+                plugins=[self.schedule_plugin, self.risk_plugin, self.thinking_logger]
             )
             
             # Get agent IDs
@@ -131,7 +136,6 @@ class ChatbotManager:
             return self.chat_sessions[session_id]
         except Exception as e:
             print(f"Error in initialize_session: {e}")
-            import traceback
             traceback.print_exc()
             raise
     
@@ -139,6 +143,9 @@ class ChatbotManager:
         """Processes a user message and returns the combined response from all agents."""
         # Generate a conversation ID for this message
         conversation_id = str(uuid.uuid4())
+        project_client = get_project_client()
+        # Keep track of thread ID if it becomes available
+        thread_id = None
         
         # Log the user query
         try:
@@ -171,72 +178,131 @@ class ChatbotManager:
                 - conversation_id: "{conversation_id}"
                 - session_id: "{session_id}"
                 - model_deployment_name: "{model_deployment_name}"
+                - user_query: "{message}"
                 """
             )
-            
-            print(f"Adding message to chat")
             await chat.add_chat_message(user_message)
-            
+
             print(f"Invoking chat...")
             # Get the responses from all agents - use a dictionary to track latest response from each agent
             latest_responses = {}
-            try:
-                async for response in chat.invoke():
-                    print(f"Response received: {response}")
-                    if response is None:
-                        print("Response is None, skipping")
+            
+            # Add retry logic for rate limit errors
+            max_retries = 3
+            retry_delay = 5  # Start with 5 seconds
+            attempt = 0
+            
+            while attempt < max_retries:
+                try:
+                    async for response in chat.invoke():
+                        print(f"Response received: {response}")
+                        if response is None:
+                            print("Response is None, skipping")
+                            continue
+                        if not hasattr(response, 'name') or not response.name:
+                            print(f"Response has no name attribute or name is empty, skipping: {response}")
+                            continue
+                        
+                        # Store only the latest response from each agent
+                        agent_name = response.name
+                        print(f"Adding/updating response content from {agent_name}: {response.content[:50]}...")
+                        latest_responses[agent_name] = response
+                        
+                        # For debugging, print current response state
+                        print(f"Current agents with responses: {list(latest_responses.keys())}")
+                        
+                        # Check if we have completed a full conversation cycle
+                        # This helps identify when the agents have finished their conversation
+                        if (ASSISTANT_AGENT in latest_responses and 
+                            ((SCHEDULER_AGENT in latest_responses and REPORTING_AGENT in latest_responses) or
+                            (not any(keyword in message.lower() for keyword in 
+                                    ["schedule", "risk", "delay", "variance", "late", "delivery", "milestone"])))):
+                            print("Complete conversation cycle detected, breaking out of loop")
+                            break
+                    
+                    # If we got here without an exception, break out of the retry loop
+                    break
+                    
+                except Exception as e:
+                    attempt += 1
+                    error_message = str(e)
+                    print(f"Error during chat.invoke() (attempt {attempt}/{max_retries}): {error_message}")
+                    
+                    # Get the thread id
+                    with project_client:
+                        thread_id = project_client.agents.list_threads(limit=1).first_id
+                        print(f"Thread ID: {thread_id}")
+
+                    # Log the error with the enhanced thinking logger
+                    try:
+                        if "Rate limit is exceeded" in error_message:
+                            error_type = "rate_limit"
+                        else:
+                            error_type = "api_error"
+
+                        self.thinking_logger.log_agent_error(
+                            agent_name="SYSTEM",
+                            error_type=error_type,
+                            error_message=error_message,
+                            conversation_id=conversation_id,
+                            session_id=session_id,
+                            azure_agent_id=None,
+                            model_deployment_name=model_deployment_name,
+                            thread_id=thread_id,
+                            user_query=message
+                        )
+                    except Exception as log_error:
+                        print(f"Error logging to enhanced thinking logger: {log_error}")
+                    
+                    # Check if it's a rate limit error
+                    if "Rate limit is exceeded" in error_message and attempt < max_retries:
+                        # Extract wait time if available
+                        import re
+                        wait_seconds = 20  # Default wait time
+                        match = re.search(r'Try again in (\d+) seconds', error_message)
+                        if match:
+                            wait_seconds = int(match.group(1))
+                            # Add a little buffer
+                            wait_seconds += 2
+                        
+                        print(f"Rate limit exceeded. Waiting for {wait_seconds} seconds before retry...")
+                        await asyncio.sleep(wait_seconds)
+                        # Continue to next retry attempt
                         continue
-                    if not hasattr(response, 'name') or not response.name:
-                        print(f"Response has no name attribute or name is empty, skipping: {response}")
-                        continue
-                    
-                    # Store only the latest response from each agent
-                    agent_name = response.name
-                    print(f"Adding/updating response content from {agent_name}: {response.content[:50]}...")
-                    latest_responses[agent_name] = response
-                    
-                    # For debugging, print current response state
-                    print(f"Current agents with responses: {list(latest_responses.keys())}")
-                    
-                    # Check if we have completed a full conversation cycle
-                    # This helps identify when the agents have finished their conversation
-                    if (ASSISTANT_AGENT in latest_responses and 
-                        ((SCHEDULER_AGENT in latest_responses and REPORTING_AGENT in latest_responses) or
-                        (not any(keyword in message.lower() for keyword in 
-                                ["schedule", "risk", "delay", "variance", "late", "delivery", "milestone"])))):
-                        print("Complete conversation cycle detected, breaking out of loop")
+                    elif attempt >= max_retries:
+                        # We've exhausted our retries
+                        print("Max retries exceeded. Creating a new chat session as fallback...")
+                        
+                        # Close the current session
+                        if session_id in self.chat_sessions:
+                            # Close the existing client and credential if they exist
+                            if "client" in session:
+                                try:
+                                    if hasattr(session["client"], 'close'):
+                                        await session["client"].close()
+                                except:
+                                    pass
+                            
+                            if "credential" in session:
+                                try:
+                                    if hasattr(session["credential"], 'close'):
+                                        await session["credential"].close()
+                                except:
+                                    pass
+                            
+                            # Delete the session
+                            del self.chat_sessions[session_id]
+                        
+                        # Return a graceful error message
+                        return {
+                            "status": "error",
+                            "error": f"The agent encountered a rate limit error. Please wait a moment and try again.",
+                            "conversation_id": conversation_id,
+                            "thread_id": thread_id
+                        }
+                    else:
+                        # For non-rate-limit errors, or if we're out of retries, break the loop and handle below
                         break
-                    
-            except Exception as e:
-                print(f"Error during chat.invoke(): {e}")
-                import traceback
-                traceback.print_exc()
-                
-                # Try to create a new chat session as a fallback
-                print("Attempting to create a new chat session as a fallback...")
-                if session_id in self.chat_sessions:
-                    # Close the existing client and credential if they exist
-                    if "client" in session:
-                        try:
-                            await session["client"].close()
-                        except:
-                            pass
-                    
-                    if "credential" in session:
-                        try:
-                            await session["credential"].close()
-                        except:
-                            pass
-                    
-                    # Delete the session
-                    del self.chat_sessions[session_id]
-                
-                # Instead of failing, return a graceful error message
-                return {
-                    "status": "error",
-                    "error": f"The agent encountered an error: {str(e)}. Please try again.",
-                    "conversation_id": conversation_id
-                }
             
             # Process the responses - use the latest response from each agent
             final_response = ""
@@ -284,18 +350,43 @@ class ChatbotManager:
             except Exception as e:
                 print(f"Error logging assistant response: {e}")
             
+            # Get the thread id
+            with project_client:
+                thread_id = project_client.agents.list_threads(limit=1).first_id
+                print(f"Thread ID: {thread_id}")
+
             return {
                 "status": "success",
                 "response": final_response.strip(),
-                "conversation_id": conversation_id
+                "conversation_id": conversation_id,
+                "thread_id": thread_id
             }
             
         except Exception as e:
             print(f"Error processing message: {e}")
-            import traceback
             traceback.print_exc()
             
-            # Log error
+            # Get the thread id
+            with project_client:
+                thread_id = project_client.agents.list_threads(limit=1).first_id
+                print(f"Thread ID: {thread_id}")
+            
+            # Log error with enhanced thinking logger
+            try:
+
+                self.thinking_logger.log_agent_error(
+                    agent_name="SYSTEM",
+                    error_type="process_error",
+                    error_message=str(e),
+                    conversation_id=conversation_id,
+                    session_id=session_id,
+                    thread_id=thread_id,
+                    user_query=message
+                )
+            except Exception as log_error:
+                print(f"Failed to log error to enhanced thinking logger: {log_error}")
+            
+            # Log error with schedule plugin
             try:
                 self.schedule_plugin.log_agent_event(
                     agent_name="Chatbot",
@@ -309,60 +400,6 @@ class ChatbotManager:
             return {
                 "status": "error",
                 "error": str(e),
-                "conversation_id": conversation_id
+                "conversation_id": conversation_id,
+                "thread_id": thread_id
             }
-
-    async def cleanup_sessions(self, max_age_minutes=30):
-        """Cleans up inactive chat sessions."""
-        now = datetime.now()
-        sessions_to_remove = []
-        
-        for session_id, session in self.chat_sessions.items():
-            # Check if session is older than max_age_minutes
-            if (now - session["last_activity"]).total_seconds() > max_age_minutes * 60:
-                sessions_to_remove.append(session_id)
-        
-        # Remove inactive sessions
-        for session_id in sessions_to_remove:
-            await self.close_session(session_id)
-            print(f"Removed inactive session: {session_id}")
-                
-        return len(sessions_to_remove)
-
-    async def close_session(self, session_id):
-        """Properly closes a chat session and all associated resources."""
-        if session_id not in self.chat_sessions:
-            return False
-            
-        session = self.chat_sessions[session_id]
-        
-        # Close the client if it exists
-        if "client" in session:
-            try:
-                client = session["client"]
-                # Check if it has a close method that's async
-                if hasattr(client, 'close') and callable(client.close):
-                    if asyncio.iscoroutinefunction(client.close):
-                        await client.close()
-                    else:
-                        client.close()
-                    print(f"Closed client for session {session_id}")
-            except Exception as e:
-                print(f"Error closing client for session {session_id}: {e}")
-        
-        # Close the credential if it exists
-        if "credential" in session:
-            try:
-                credential = session["credential"]
-                if hasattr(credential, 'close') and callable(credential.close):
-                    if asyncio.iscoroutinefunction(credential.close):
-                        await credential.close()
-                    else:
-                        credential.close()
-                    print(f"Closed credential for session {session_id}")
-            except Exception as e:
-                print(f"Error closing credential for session {session_id}: {e}")
-        
-        # Delete the session
-        del self.chat_sessions[session_id]
-        return True
