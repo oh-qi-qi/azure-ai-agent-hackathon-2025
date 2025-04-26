@@ -13,7 +13,8 @@ class RiskCalculationPlugin:
             if days_until_due <= 0:
                 return "100.0"  # Already past due
             
-            risk_percent = abs(days_variance / days_until_due * 100)
+            #risk_percent = abs(days_variance / days_until_due * 100)
+            risk_percent = days_variance / days_until_due * 100
             return f"{risk_percent:.2f}"
         except Exception as e:
             return "-1"  # Error indicator
@@ -22,8 +23,8 @@ class RiskCalculationPlugin:
     def categorize_risk(self, risk_percentage: float) -> str:
         """Categorizes risk based on percentage and returns risk flag and points"""
         try:
-            if risk_percentage < 0:
-                return json.dumps({"error": "Invalid risk percentage"})
+            # if risk_percentage < 0:
+            #     return json.dumps({"error": "Invalid risk percentage"})
             
             if risk_percentage < 5:
                 return json.dumps({
