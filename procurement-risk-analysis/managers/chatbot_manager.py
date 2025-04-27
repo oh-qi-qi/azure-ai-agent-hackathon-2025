@@ -2,20 +2,21 @@
 
 import uuid
 import asyncio
+import json
+import re
 from datetime import datetime
 
 from azure.identity.aio import DefaultAzureCredential
 from semantic_kernel.agents import AgentGroupChat
 from semantic_kernel.agents import AzureAIAgent
-# Make sure this import is correct:
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.contents.utils.author_role import AuthorRole
 
 from config.settings import initialize_ai_agent_settings
 from agents.agent_definitions import (
-    SCHEDULER_AGENT, SCHEDULER_AGENT_INSTRUCTIONS,
-    REPORTING_AGENT, REPORTING_AGENT_INSTRUCTIONS,
-    ASSISTANT_AGENT, ASSISTANT_AGENT_INSTRUCTIONS
+    SCHEDULER_AGENT, get_scheduler_agent_instructions,
+    REPORTING_AGENT, get_reporting_agent_instructions,
+    ASSISTANT_AGENT, get_assistant_agent_instructions
 )
 from agents.agent_strategies import (
     ChatbotSelectionStrategy, ChatbotTerminationStrategy
@@ -23,7 +24,7 @@ from agents.agent_strategies import (
 from agents.agent_manager import create_or_reuse_agent
 from plugins.schedule_plugin import EquipmentSchedulePlugin
 from plugins.risk_plugin import RiskCalculationPlugin
-from plugins.thinking_logger_plugin import ThinkingLoggerPlugin
+from plugins.logging_plugin import LoggingPlugin
 
 class ChatbotManager:
     """Manages the interactive chatbot for user queries."""
@@ -32,7 +33,7 @@ class ChatbotManager:
         self.connection_string = connection_string
         self.schedule_plugin = EquipmentSchedulePlugin(connection_string)
         self.risk_plugin = RiskCalculationPlugin()
-        self.thinking_logger = ThinkingLoggerPlugin(connection_string)
+        self.logging_plugin = LoggingPlugin(connection_string)
         self.chat_sessions = {}
         self._session_locks = {}  # Dictionary to store locks for each session ID
     
@@ -64,81 +65,141 @@ class ChatbotManager:
             
             print(f"Creating new chat session (with lock): {session_id}")
             
-            # Create or reuse all three agents
-            print("Creating/retrieving scheduler agent...")
-            scheduler_agent = await create_or_reuse_agent(
-                client=client,
-                agent_name=SCHEDULER_AGENT,
-                model_deployment_name=ai_agent_settings.model_deployment_name,
-                instructions=SCHEDULER_AGENT_INSTRUCTIONS,
-                plugins=[self.schedule_plugin, self.risk_plugin, self.thinking_logger]  # Include thinking logger here
-            )
-
-            print("Creating/retrieving reporting agent...")
-            reporting_agent = await create_or_reuse_agent(
-                client=client,
-                agent_name=REPORTING_AGENT,
-                model_deployment_name=ai_agent_settings.model_deployment_name,
-                instructions=REPORTING_AGENT_INSTRUCTIONS,
-                plugins=[self.schedule_plugin, self.thinking_logger]  # Include thinking logger here
-            )
-
-            print("Creating/retrieving assistant agent...")
-            assistant_agent = await create_or_reuse_agent(
-                client=client,
-                agent_name=ASSISTANT_AGENT,
-                model_deployment_name=ai_agent_settings.model_deployment_name,
-                instructions=ASSISTANT_AGENT_INSTRUCTIONS,
-                plugins=[self.schedule_plugin, self.risk_plugin, self.thinking_logger]  # Include thinking logger here
-            )
+            # Get Azure AI Agent settings
+            ai_agent_settings = initialize_ai_agent_settings()
             
             try:
                 # Create credentials - no await needed
                 creds = DefaultAzureCredential(exclude_environment_credential=True, 
                                            exclude_managed_identity_credential=True)
                 
-            print(f"Scheduler agent ready: {scheduler_agent.name} (ID: {scheduler_agent_id})")
-            print(f"Reporting agent ready: {reporting_agent.name} (ID: {reporting_agent_id})")
-            print(f"Assistant agent ready: {assistant_agent.name} (ID: {assistant_agent_id})")
-            
-            print("Creating agent group chat with all three agents...")
-            
-            # Create the agent group chat with all three agents
-            chat = AgentGroupChat(
-                agents=[assistant_agent, scheduler_agent, reporting_agent],
-                termination_strategy=ChatbotTerminationStrategy(),
-                selection_strategy=ChatbotSelectionStrategy()
-            )
-            
-            print(f"Creating chat session...")
-            
-            # Store the chat session
-            self.chat_sessions[session_id] = {
-                "chat": chat,
-                "client": client,
-                "credential": creds,
-                "last_activity": datetime.now(),
-                "model_deployment_name": ai_agent_settings.model_deployment_name,
-                "scheduler_agent_id": scheduler_agent_id,
-                "reporting_agent_id": reporting_agent_id,
-                "assistant_agent_id": assistant_agent_id
-            }
-            
-            return self.chat_sessions[session_id]
-        except Exception as e:
-            print(f"Error in initialize_session: {e}")
-            import traceback
-            traceback.print_exc()
-            raise
+                # Create client - no await needed
+                client = AzureAIAgent.create_client(credential=creds)
+                
+                # Create separate logging plugins for each agent
+                scheduler_logging = LoggingPlugin(self.connection_string)
+                reporting_logging = LoggingPlugin(self.connection_string)
+                assistant_logging = LoggingPlugin(self.connection_string)
+                
+                # Create or reuse all three agents
+                print("Creating/retrieving scheduler agent...")
+                scheduler_agent = await create_or_reuse_agent(
+                    client=client,
+                    agent_name=SCHEDULER_AGENT,
+                    model_deployment_name=ai_agent_settings.model_deployment_name,
+                    instructions=get_scheduler_agent_instructions(),  # Use dynamic instruction function
+                    plugins=[self.schedule_plugin, self.risk_plugin, scheduler_logging]
+                )
+
+                print("Creating/retrieving reporting agent...")
+                reporting_agent = await create_or_reuse_agent(
+                    client=client,
+                    agent_name=REPORTING_AGENT,
+                    model_deployment_name=ai_agent_settings.model_deployment_name,
+                    instructions=get_reporting_agent_instructions(),  # Use dynamic instruction function
+                    plugins=[self.schedule_plugin, reporting_logging]
+                )
+
+                print("Creating/retrieving assistant agent...")
+                assistant_agent = await create_or_reuse_agent(
+                    client=client,
+                    agent_name=ASSISTANT_AGENT,
+                    model_deployment_name=ai_agent_settings.model_deployment_name,
+                    instructions=get_assistant_agent_instructions(),  # Use dynamic instruction function
+                    plugins=[self.schedule_plugin, self.risk_plugin, assistant_logging]
+                )
+                
+                # Get agent IDs
+                scheduler_agent_id = None
+                reporting_agent_id = None
+                assistant_agent_id = None
+                
+                # Extract IDs if available
+                if hasattr(scheduler_agent, 'definition') and hasattr(scheduler_agent.definition, 'id'):
+                    scheduler_agent_id = scheduler_agent.definition.id
+                if hasattr(reporting_agent, 'definition') and hasattr(reporting_agent.definition, 'id'):
+                    reporting_agent_id = reporting_agent.definition.id
+                if hasattr(assistant_agent, 'definition') and hasattr(assistant_agent.definition, 'id'):
+                    assistant_agent_id = assistant_agent.definition.id
+                
+                # Set agent IDs in their respective logging plugins
+                if scheduler_agent_id:
+                    scheduler_logging.set_agent_id(scheduler_agent_id)
+                if reporting_agent_id:
+                    reporting_logging.set_agent_id(reporting_agent_id)
+                if assistant_agent_id:
+                    assistant_logging.set_agent_id(assistant_agent_id)
+                
+                # Now recreate agents with instructions that include their IDs
+                if scheduler_agent_id:
+                    scheduler_agent = await create_or_reuse_agent(
+                        client=client,
+                        agent_name=SCHEDULER_AGENT,
+                        model_deployment_name=ai_agent_settings.model_deployment_name,
+                        instructions=get_scheduler_agent_instructions(scheduler_agent_id),
+                        plugins=[self.schedule_plugin, self.risk_plugin, scheduler_logging]
+                    )
+                
+                if reporting_agent_id:
+                    reporting_agent = await create_or_reuse_agent(
+                        client=client,
+                        agent_name=REPORTING_AGENT,
+                        model_deployment_name=ai_agent_settings.model_deployment_name,
+                        instructions=get_reporting_agent_instructions(reporting_agent_id),
+                        plugins=[self.schedule_plugin, reporting_logging]
+                    )
+                
+                if assistant_agent_id:
+                    assistant_agent = await create_or_reuse_agent(
+                        client=client,
+                        agent_name=ASSISTANT_AGENT,
+                        model_deployment_name=ai_agent_settings.model_deployment_name,
+                        instructions=get_assistant_agent_instructions(assistant_agent_id),
+                        plugins=[self.schedule_plugin, self.risk_plugin, assistant_logging]
+                    )
+                
+                print(f"Scheduler agent ready: {scheduler_agent.name} (ID: {scheduler_agent_id})")
+                print(f"Reporting agent ready: {reporting_agent.name} (ID: {reporting_agent_id})")
+                print(f"Assistant agent ready: {assistant_agent.name} (ID: {assistant_agent_id})")
+                
+                print("Creating agent group chat with all three agents...")
+                
+                # Create the agent group chat with all three agents
+                chat = AgentGroupChat(
+                    agents=[assistant_agent, scheduler_agent, reporting_agent],
+                    termination_strategy=ChatbotTerminationStrategy(),
+                    selection_strategy=ChatbotSelectionStrategy()
+                )
+                
+                print(f"Creating chat session...")
+                
+                # Store the chat session
+                self.chat_sessions[session_id] = {
+                    "chat": chat,
+                    "client": client,
+                    "credential": creds,
+                    "last_activity": datetime.now(),
+                    "model_deployment_name": ai_agent_settings.model_deployment_name,
+                    "scheduler_agent_id": scheduler_agent_id,
+                    "reporting_agent_id": reporting_agent_id,
+                    "assistant_agent_id": assistant_agent_id
+                }
+                
+                return self.chat_sessions[session_id]
+            except Exception as e:
+                print(f"Error in initialize_session: {e}")
+                import traceback
+                traceback.print_exc()
+                raise
     
     async def process_message(self, session_id, message):
         """Processes a user message and returns the combined response from all agents."""
         # Generate a conversation ID for this message
         conversation_id = str(uuid.uuid4())
         
-        # Log the user query with the event logger
+        # Log the user query with the logging plugin
         try:
-            self.event_logger.log_agent_event(
+            self.logging_plugin.log_agent_event(
                 agent_name="Chatbot",
                 action="User Query",
                 result_summary=f"Processing user query: {message}",
@@ -158,6 +219,10 @@ class ChatbotManager:
             
             # Get model deployment name from session
             model_deployment_name = session.get("model_deployment_name", "unknown")
+            
+            # Check if the message is schedule-related
+            is_schedule_related = any(keyword in message.lower() for keyword in 
+                                    ["schedule risk", "schedule delay", "schedule variance", "late", "delivery", "milestone", "schedule"])
             
             # Add the user message to the chat with thinking context
             print(f"Creating user message content")
@@ -196,11 +261,9 @@ class ChatbotManager:
                     print(f"Current agents with responses: {list(latest_responses.keys())}")
                     
                     # Check if we have completed a full conversation cycle
-                    # This helps identify when the agents have finished their conversation
                     if (ASSISTANT_AGENT in latest_responses and 
                         ((SCHEDULER_AGENT in latest_responses and REPORTING_AGENT in latest_responses) or
-                        (not any(keyword in message.lower() for keyword in 
-                                ["schedule", "risk", "delay", "variance", "late", "delivery", "milestone"])))):
+                        (not is_schedule_related))):
                         print("Complete conversation cycle detected, breaking out of loop")
                         break
                     
@@ -208,25 +271,6 @@ class ChatbotManager:
                 print(f"Error during chat.invoke(): {e}")
                 import traceback
                 traceback.print_exc()
-                
-                # Try to create a new chat session as a fallback
-                print("Attempting to create a new chat session as a fallback...")
-                if session_id in self.chat_sessions:
-                    # Close the existing client and credential if they exist
-                    if "client" in session:
-                        try:
-                            await session["client"].close()
-                        except:
-                            pass
-                    
-                    if "credential" in session:
-                        try:
-                            await session["credential"].close()
-                        except:
-                            pass
-                    
-                    # Delete the session
-                    del self.chat_sessions[session_id]
                 
                 # Instead of failing, return a graceful error message
                 return {
@@ -352,7 +396,7 @@ class ChatbotManager:
                             
                             # Log this action
                             try:
-                                self.event_logger.log_agent_event(
+                                self.logging_plugin.log_agent_event(
                                     agent_name="SYSTEM",
                                     action="Report Generation Assistance",
                                     result_summary="Generated replacement report due to agent communication issues",
@@ -368,6 +412,7 @@ class ChatbotManager:
                     
                     except Exception as e:
                         print(f"Error trying to bridge gap between scheduler and reporting agents: {e}")
+                        import traceback
                         traceback.print_exc()
             
             # More robust response formatting
@@ -412,7 +457,7 @@ class ChatbotManager:
             
             # Log the assistant's response
             try:
-                self.event_logger.log_agent_event(
+                self.logging_plugin.log_agent_event(
                     agent_name="Chatbot",
                     action="Assistant Response",
                     result_summary="Generated combined response to user query",
@@ -436,7 +481,7 @@ class ChatbotManager:
             
             # Log error
             try:
-                self.event_logger.log_agent_event(
+                self.logging_plugin.log_agent_event(
                     agent_name="Chatbot",
                     action="Message Error",
                     result_summary=f"Error processing message: {str(e)}",

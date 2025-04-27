@@ -1,17 +1,39 @@
-"""Enhanced thinking logger plugin for tracking agent reasoning with more context and outputs."""
+"""Consolidated logging plugin for all agent and event logging."""
 
 import json
 import uuid
 import pyodbc
-from datetime import datetime
 from semantic_kernel.functions.kernel_function_decorator import kernel_function
-from config.settings import get_project_client
 
-class EnhancedThinkingLoggerPlugin:
-    """An enhanced plugin for logging agent thinking processes with more contextual information and outputs."""
+class LoggingPlugin:
+    """A consolidated plugin for all logging functions."""
     
     def __init__(self, connection_string):
         self.connection_string = connection_string
+        # Store agent ID in memory once retrieved
+        self._current_agent_id = None
+    
+    @kernel_function(description="Get the current agent's ID")
+    def log_agent_get_agent_id(self) -> str:
+        """Retrieves the current agent's ID from context
+        
+        Returns:
+            The current agent's ID
+        """
+        # If agent ID is already set, return it
+        if self._current_agent_id:
+            return self._current_agent_id
+        
+        # Otherwise, return placeholder
+        return "AGENT_ID_NOT_SET"
+    
+    def set_agent_id(self, agent_id: str):
+        """Sets the current agent ID
+        
+        Args:
+            agent_id: The ID to set
+        """
+        self._current_agent_id = agent_id
     
     @kernel_function(description="Retrieve agent thread id")
     def log_agent_get_thread_id(self) -> str:
@@ -21,6 +43,7 @@ class EnhancedThinkingLoggerPlugin:
             latest thread id
         """
         try:
+            from config.settings import get_project_client
             project_client = get_project_client()
             thread_id = None
 
@@ -34,14 +57,14 @@ class EnhancedThinkingLoggerPlugin:
         except Exception as e:
             print(f"Error getting thread ID: {e}")
             return json.dumps({"error": str(e)})
-
-    @kernel_function(description="Log the agent's thinking process with extended context and output")
+    
+    @kernel_function(description="Log the agent's thinking process")
     def log_agent_thinking(self, agent_name: str, thinking_stage: str, thought_content: str, 
                           conversation_id: str = None, session_id: str = None, 
                           azure_agent_id: str = None, model_deployment_name: str = None,
                           thread_id: str = None, user_query: str = None, 
                           agent_output: str = None, status: str = "success") -> str:
-        """Logs the agent's thinking process to the database with extended context and output
+        """Logs the agent's thinking process to the database
         
         Args:
             agent_name: Name of the agent (e.g., SCHEDULER_AGENT)
@@ -68,12 +91,9 @@ class EnhancedThinkingLoggerPlugin:
             conn = pyodbc.connect(self.connection_string)
             cursor = conn.cursor()
             
-            # Check if the enhanced table exists, if not create it
-            self._ensure_enhanced_table_exists(cursor)
-            
             # Execute insert query
             cursor.execute("""
-                INSERT INTO dim_agent_thinking_log_enhanced
+                INSERT INTO dim_agent_thinking_log
                 (agent_name, thinking_stage, thought_content, agent_output, conversation_id, 
                 session_id, azure_agent_id, model_deployment_name, thread_id,
                 user_query, status, created_date)
@@ -91,6 +111,50 @@ class EnhancedThinkingLoggerPlugin:
             
         except Exception as e:
             print(f"Error logging agent thinking: {e}")
+            return json.dumps({"error": str(e)})
+    
+    @kernel_function(description="Logs an agent event for observability")
+    def log_agent_event(self, agent_name: str, action: str, result_summary: str = None, 
+                       conversation_id: str = None, user_query: str = None, 
+                       agent_output: str = None) -> str:
+        """Logs an agent event to the database
+        
+        Args:
+            agent_name: Name of the agent (e.g., SCHEDULER_AGENT)
+            action: Action being performed (e.g., User Query, Schedule Analysis)
+            result_summary: Brief summary of the result
+            conversation_id: Unique ID for this conversation
+            user_query: The user's question or prompt
+            agent_output: The agent's response or output
+            
+        Returns:
+            JSON string with result information
+        """
+        try:
+            # Connect to database
+            conn = pyodbc.connect(self.connection_string)
+            cursor = conn.cursor()
+            
+            # Use existing conversation_id or create a new one
+            if not conversation_id:
+                conversation_id = str(uuid.uuid4())
+            
+            # Prepare parameters for stored procedure
+            params = (agent_name, action, result_summary, conversation_id, user_query, agent_output)
+            
+            # Execute stored procedure
+            cursor.execute("EXEC sp_LogAgentEvent ?, ?, ?, ?, ?, ?", params)
+            
+            # Commit and close connection
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            # Return success message with the conversation_id
+            return json.dumps({"success": True, "conversation_id": conversation_id})
+            
+        except Exception as e:
+            print(f"Error in log_agent_event: {str(e)}")
             return json.dumps({"error": str(e)})
     
     @kernel_function(description="Log an error that occurred during agent thinking")
@@ -128,12 +192,12 @@ class EnhancedThinkingLoggerPlugin:
             status="error"
         )
     
-    @kernel_function(description="Retrieves agent thinking logs with enhanced context")
-    def get_enhanced_thinking_logs(self, conversation_id: str = None, 
-                                 session_id: str = None, 
-                                 agent_name: str = None,
-                                 limit: int = 100) -> str:
-        """Retrieves the enhanced agent thinking logs with filtering options
+    @kernel_function(description="Retrieves agent thinking logs")
+    def get_agent_thinking_logs(self, conversation_id: str = None, 
+                               session_id: str = None, 
+                               agent_name: str = None,
+                               limit: int = 100) -> str:
+        """Retrieves the agent thinking logs with filtering options
         
         Args:
             conversation_id: Filter by conversation ID
@@ -148,9 +212,6 @@ class EnhancedThinkingLoggerPlugin:
             # Connect to database
             conn = pyodbc.connect(self.connection_string)
             cursor = conn.cursor()
-            
-            # Ensure the table exists
-            self._ensure_enhanced_table_exists(cursor)
             
             # Build the WHERE clause based on provided filters
             where_clauses = []
@@ -179,7 +240,7 @@ class EnhancedThinkingLoggerPlugin:
                     thinking_id, agent_name, thinking_stage, thought_content, agent_output,
                     conversation_id, session_id, azure_agent_id, model_deployment_name, 
                     thread_id, user_query, status, created_date
-                FROM dim_agent_thinking_log_enhanced
+                FROM dim_agent_thinking_log
                 {where_clause}
                 ORDER BY created_date DESC
             """
@@ -203,37 +264,111 @@ class EnhancedThinkingLoggerPlugin:
             return json.dumps(logs, default=str)
             
         except Exception as e:
-            print(f"Error retrieving enhanced thinking logs: {e}")
+            print(f"Error retrieving thinking logs: {e}")
             return json.dumps({"error": str(e)})
     
-    def _ensure_enhanced_table_exists(self, cursor):
-        """Ensures that the enhanced thinking log table exists"""
+    @kernel_function(description="Retrieves conversation history")
+    def get_conversation_history(self, conversation_id: str) -> str:
+        """Retrieves the conversation history for a specific conversation ID
+        
+        Args:
+            conversation_id: The conversation ID to retrieve history for
+            
+        Returns:
+            JSON string with conversation history
+        """
         try:
-            # Check if the table exists
+            # Connect to database
+            conn = pyodbc.connect(self.connection_string)
+            cursor = conn.cursor()
+            
+            # Execute query to get conversation history
             cursor.execute("""
-                IF NOT EXISTS (
-                    SELECT * FROM sys.tables 
-                    WHERE name = 'dim_agent_thinking_log_enhanced'
-                )
-                BEGIN
-                    CREATE TABLE dim_agent_thinking_log_enhanced (
-                        thinking_id INT IDENTITY(1,1) PRIMARY KEY,
-                        agent_name VARCHAR(100) NOT NULL,
-                        thinking_stage VARCHAR(50) NOT NULL,
-                        thought_content NVARCHAR(MAX) NOT NULL,
-                        agent_output NVARCHAR(MAX) NULL,
-                        conversation_id VARCHAR(100) NOT NULL,
-                        session_id VARCHAR(100) NULL,
-                        azure_agent_id VARCHAR(100) NULL,
-                        model_deployment_name VARCHAR(100) NULL,
-                        thread_id VARCHAR(100) NULL,
-                        user_query NVARCHAR(MAX) NULL,
-                        status VARCHAR(50) DEFAULT 'success',
-                        created_date DATETIME DEFAULT GETDATE()
-                    )
-                END
-            """)
-            cursor.commit()
+                SELECT 
+                    log_id, 
+                    agent_name, 
+                    event_time, 
+                    action, 
+                    result_summary, 
+                    user_query, 
+                    agent_output
+                FROM 
+                    dim_agent_event_log
+                WHERE 
+                    conversation_id = ?
+                ORDER BY 
+                    event_time
+            """, (conversation_id,))
+            
+            # Fetch results
+            columns = [column[0] for column in cursor.description]
+            rows = cursor.fetchall()
+            
+            # Convert to list of dictionaries
+            events = []
+            for row in rows:
+                events.append(dict(zip(columns, row)))
+            
+            # Close connection
+            cursor.close()
+            conn.close()
+            
+            # Return as JSON string
+            return json.dumps({"conversation_id": conversation_id, "events": events}, default=str)
+            
         except Exception as e:
-            print(f"Error ensuring enhanced table exists: {e}")
-            raise
+            print(f"Error in get_conversation_history: {str(e)}")
+            return json.dumps({"error": str(e)})
+    
+    @kernel_function(description="Retrieves recent conversations")
+    def get_recent_conversations(self, limit: int = 10) -> str:
+        """Retrieves a list of recent conversations
+        
+        Args:
+            limit: Maximum number of conversations to retrieve
+            
+        Returns:
+            JSON string with recent conversations
+        """
+        try:
+            # Connect to database
+            conn = pyodbc.connect(self.connection_string)
+            cursor = conn.cursor()
+            
+            # Execute query to get recent conversations
+            cursor.execute(f"""
+                SELECT 
+                    conversation_id,
+                    MIN(event_time) as start_time,
+                    MAX(event_time) as end_time,
+                    COUNT(*) as event_count,
+                    MAX(CASE WHEN action = 'User Query' THEN user_query ELSE NULL END) as last_query
+                FROM 
+                    dim_agent_event_log
+                GROUP BY 
+                    conversation_id
+                ORDER BY 
+                    MAX(event_time) DESC
+                OFFSET 0 ROWS
+                FETCH NEXT {limit} ROWS ONLY
+            """)
+            
+            # Fetch results
+            columns = [column[0] for column in cursor.description]
+            rows = cursor.fetchall()
+            
+            # Convert to list of dictionaries
+            conversations = []
+            for row in rows:
+                conversations.append(dict(zip(columns, row)))
+            
+            # Close connection
+            cursor.close()
+            conn.close()
+            
+            # Return as JSON string
+            return json.dumps({"conversations": conversations}, default=str)
+            
+        except Exception as e:
+            print(f"Error in get_recent_conversations: {str(e)}")
+            return json.dumps({"error": str(e)})

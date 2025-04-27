@@ -361,21 +361,24 @@ with tab3:
             except Exception as e:
                 st.error(f"Database query failed: {str(e)}")
 
-    # Add this to your streamlit_app.py in the System Status tab
+    # Updated section for viewing thinking logs
     if "workflow_results" in st.session_state and st.session_state.workflow_results:
         workflow_run_id = st.session_state.workflow_results.get("workflow_run_id")
         if workflow_run_id and st.button("View Agent Thinking Logs"):
-            from plugins.schedule_plugin import EquipmentSchedulePlugin
+            from plugins.logging_plugin import LoggingPlugin  # Updated import
             connection_string = os.getenv("DB_CONNECTION_STRING")
-            plugin = EquipmentSchedulePlugin(connection_string)
-            logs_json = plugin.get_agent_thinking_logs(workflow_run_id)
+            logging_plugin = LoggingPlugin(connection_string)  # Use logging plugin instead of schedule plugin
+            logs_json = logging_plugin.get_agent_thinking_logs(conversation_id=workflow_run_id)  # Updated method
             logs = json.loads(logs_json)
             
-            if logs:
+            if logs and not isinstance(logs, dict):  # Check if logs is list of dicts
                 st.subheader("Agent Thinking Logs")
                 for log in logs:
                     with st.expander(f"{log['agent_name']} - {log['thinking_stage']} ({log['created_date']})"):
                         st.write(log['thought_content'])
+                        if log.get('agent_output'):  # Show agent output if available
+                            st.markdown("**Agent Output:**")
+                            st.code(log['agent_output'])
             else:
                 st.info("No thinking logs found for this run")
 

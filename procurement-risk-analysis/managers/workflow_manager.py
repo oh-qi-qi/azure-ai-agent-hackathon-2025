@@ -22,7 +22,7 @@ from agents.agent_strategies import (
 from agents.agent_manager import create_or_reuse_agent
 from plugins.schedule_plugin import EquipmentSchedulePlugin
 from plugins.risk_plugin import RiskCalculationPlugin
-from plugins.thinking_logger_plugin import ThinkingLoggerPlugin
+from plugins.logging_plugin import LoggingPlugin  # Updated import
 
 class AutomatedWorkflowManager:
     """Manages the automated workflow for schedule analysis."""
@@ -31,7 +31,7 @@ class AutomatedWorkflowManager:
         self.connection_string = connection_string
         self.schedule_plugin = EquipmentSchedulePlugin(connection_string)
         self.risk_plugin = RiskCalculationPlugin()
-        self.thinking_logger = ThinkingLoggerPlugin(connection_string)
+        self.logging_plugin = LoggingPlugin(connection_string)  # Updated to use consolidated logging
     
     async def run_workflow(self):
         """Runs the automated workflow for schedule analysis."""
@@ -58,7 +58,7 @@ class AutomatedWorkflowManager:
         
         # Log workflow start
         try:
-            self.schedule_plugin.log_agent_event(
+            self.logging_plugin.log_agent_event(  # Updated to use consolidated logging
                 agent_name="Orchestrator",
                 action="Start Workflow",
                 result_summary="Starting equipment schedule analysis workflow",
@@ -86,7 +86,7 @@ class AutomatedWorkflowManager:
                     agent_name=SCHEDULER_AGENT,
                     model_deployment_name=ai_agent_settings.model_deployment_name,
                     instructions=SCHEDULER_AGENT_INSTRUCTIONS,
-                    plugins=[self.schedule_plugin, self.risk_plugin, self.thinking_logger]  # Include thinking logger here
+                    plugins=[self.schedule_plugin, self.risk_plugin, self.logging_plugin]  # Updated plugin list
                 )
 
                 # Create or reuse the reporting agent
@@ -95,7 +95,7 @@ class AutomatedWorkflowManager:
                     agent_name=REPORTING_AGENT,
                     model_deployment_name=ai_agent_settings.model_deployment_name,
                     instructions=REPORTING_AGENT_INSTRUCTIONS,
-                    plugins=[self.schedule_plugin, self.thinking_logger]  # Include thinking logger here
+                    plugins=[self.schedule_plugin, self.logging_plugin]  # Updated plugin list
                 )
                 
                 # Get agent IDs
@@ -162,7 +162,7 @@ class AutomatedWorkflowManager:
                     
                     # Log workflow completion
                     try:
-                        self.schedule_plugin.log_agent_event(
+                        self.logging_plugin.log_agent_event(  # Updated to use consolidated logging
                             agent_name="Orchestrator",
                             action="Complete Workflow",
                             result_summary="Equipment schedule analysis workflow completed successfully",
@@ -185,7 +185,7 @@ class AutomatedWorkflowManager:
                     
                     # Log error
                     try:
-                        self.schedule_plugin.log_agent_event(
+                        self.logging_plugin.log_agent_event(  # Updated to use consolidated logging
                             agent_name="Orchestrator",
                             action="Workflow Error",
                             result_summary=f"Error during workflow execution: {str(e)}",
@@ -213,7 +213,7 @@ class AutomatedWorkflowManager:
             
             # Log error
             try:
-                self.schedule_plugin.log_agent_event(
+                self.logging_plugin.log_agent_event(  # Updated to use consolidated logging
                     agent_name="Orchestrator",
                     action="Workflow Setup Error",
                     result_summary=f"Error setting up workflow: {str(e)}",

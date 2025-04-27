@@ -213,19 +213,19 @@ CREATE TABLE dim_agent_event_log (
     created_date DATETIME DEFAULT GETDATE()
 );
 
-
+-- Create consolidated thinking log table with all features
 CREATE TABLE dim_agent_thinking_log (
     thinking_id INT IDENTITY(1,1) PRIMARY KEY,
     agent_name VARCHAR(100) NOT NULL,
     thinking_stage VARCHAR(50) NOT NULL,
     thought_content NVARCHAR(MAX) NOT NULL,
-    agent_output NVARCHAR(MAX) NULL,  -- New column for agent output
+    agent_output NVARCHAR(MAX) NULL,
     conversation_id VARCHAR(100) NOT NULL,
     session_id VARCHAR(100) NULL,
     azure_agent_id VARCHAR(100) NULL,
     model_deployment_name VARCHAR(100) NULL,
     thread_id VARCHAR(100) NULL,
     user_query NVARCHAR(MAX) NULL,
-    status VARCHAR(50) DEFAULT 'unknown',
+    status VARCHAR(50) DEFAULT 'success',
     created_date DATETIME DEFAULT GETDATE()
 );
