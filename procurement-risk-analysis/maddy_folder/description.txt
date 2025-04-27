@@ -1,0 +1,25 @@
+sp_get_equipment_location.sql
+-----------------------------
+stored procedure to get all locations
+
+locator_plugin.py
+-----------------
+for analyzing logistics risks based on shipping and receiving ports and analysing poltitcal or tariff risks based on manufacturing or project locations
+
+Functions
+1. analyze_manufacturing_location_risks - get manufacturing locations 
+2. analyze_port_logistics_risks - get shipping_port and receiving_port
+
+visual_plugin.py
+----------------
+for converting the risk analyst agent outputs into inputs for the heatmap and report
+
+Functions
+1. convert_political_news_to_risk_json - gets the output from risk analyst agents into json (not sure if we need
+this because i gave the agents instruction to create this json already >< but if we need it, we can use it across
+the 3 agents)
+
+2. create_country_risk_heatmap - calculates avg risk of the risk likelihoods
+
+3. merge_agent_risk_outputs - merges all the outputs from 3 agents together
+
