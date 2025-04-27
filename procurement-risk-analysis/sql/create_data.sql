@@ -1,6 +1,8 @@
--- Sample data for dim_project
-INSERT INTO dim_project (project_code, project_name)
-VALUES ('100000', 'Project A');
+-- Script to insert sample data
+
+-- Sample data for dim_project with the new columns
+INSERT INTO dim_project (project_code, project_name, project_country, project_location)
+VALUES ('100000', 'Project A', 'Singapore', 'Tuas South Avenue 14, Singapore 637312');
 
 -- Sample data for dim_work_package
 INSERT INTO dim_work_package (work_package_code, work_package_name, wbs)

@@ -13,8 +13,8 @@ class RiskCalculationPlugin:
             if days_until_due <= 0:
                 return "100.0"  # Already past due
             
-            #risk_percent = abs(days_variance / days_until_due * 100)
-            risk_percent = days_variance / days_until_due * 100
+            risk_percent = abs(days_variance / days_until_due * 100)
+            #risk_percent = days_variance / days_until_due * 100
             return f"{risk_percent:.2f}"
         except Exception as e:
             return "-1"  # Error indicator

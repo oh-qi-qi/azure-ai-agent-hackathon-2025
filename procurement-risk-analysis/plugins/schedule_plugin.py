@@ -197,49 +197,45 @@ class EquipmentSchedulePlugin:
             
         except Exception as e:
             return json.dumps({"error": str(e)})
-<<<<<<< Updated upstream
     
-    # @kernel_function(description="Logs a schedule variance detected by the agent")
-    # def log_schedule_variance(self, project_id: int, equipment_id: int, work_package_id: int, 
-    #                         milestone_id: int, p6_due_date: str, equipment_delivery_date: str, 
-    #                         days_variance: int, risk_flag: str, risk_description: str, 
-    #                         mitigation_action: str, conversation_id: str) -> str:
-    #     """Logs a schedule variance to the database"""
-    #     try:
-    #         # Connect to database
-    #         conn = pyodbc.connect(self.connection_string)
-    #         cursor = conn.cursor()
+    @kernel_function(description="Logs a schedule variance detected by the agent")
+    def log_schedule_variance(self, project_id: int, equipment_id: int, work_package_id: int, 
+                            milestone_id: int, p6_due_date: str, equipment_delivery_date: str, 
+                            days_variance: int, risk_flag: str, risk_description: str, 
+                            mitigation_action: str, conversation_id: str) -> str:
+        """Logs a schedule variance to the database"""
+        try:
+            # Connect to database
+            conn = pyodbc.connect(self.connection_string)
+            cursor = conn.cursor()
             
-    #         # Prepare parameters for stored procedure
-    #         params = (project_id, equipment_id, work_package_id, milestone_id, 
-    #                 p6_due_date, equipment_delivery_date, days_variance,
-    #                 risk_flag, risk_description, mitigation_action, conversation_id)
+            # Prepare parameters for stored procedure
+            params = (project_id, equipment_id, work_package_id, milestone_id, 
+                    p6_due_date, equipment_delivery_date, days_variance,
+                    risk_flag, risk_description, mitigation_action, conversation_id)
             
-    #         # Execute stored procedure with output parameter
-    #         cursor.execute("""
-    #             DECLARE @variance_id INT;
-    #             EXEC sp_LogScheduleVariance ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, @variance_id OUTPUT;
-    #             SELECT @variance_id AS variance_id;
-    #         """, params)
+            # Execute stored procedure with output parameter
+            cursor.execute("""
+                DECLARE @variance_id INT;
+                EXEC sp_LogScheduleVariance ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, @variance_id OUTPUT;
+                SELECT @variance_id AS variance_id;
+            """, params)
             
-    #         # Get the variance_id
-    #         result = cursor.fetchone()
-    #         variance_id = result.variance_id if result else None
+            # Get the variance_id
+            result = cursor.fetchone()
+            variance_id = result.variance_id if result else None
             
-    #         # Commit and close connection
-    #         conn.commit()
-    #         cursor.close()
-    #         conn.close()
+            # Commit and close connection
+            conn.commit()
+            cursor.close()
+            conn.close()
             
-    #         # Return success message with the variance_id
-    #         return json.dumps({"success": True, "variance_id": variance_id})
+            # Return success message with the variance_id
+            return json.dumps({"success": True, "variance_id": variance_id})
             
-    #     except Exception as e:
-    #         return json.dumps({"error": str(e)})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
     
-=======
-
->>>>>>> Stashed changes
     @kernel_function(description="Logs multiple schedule variances in a batch")
     def log_schedule_variances_batch(self, variances_json: str) -> str:
         """Logs multiple schedule variances from a JSON array of variance objects
@@ -312,27 +308,16 @@ class EquipmentSchedulePlugin:
             })
         except Exception as e:
             return json.dumps({"error": str(e)})
-<<<<<<< Updated upstream
     
     @kernel_function(description="Logs an agent event for observability")
     def log_agent_event(self, agent_name: str, action: str, result_summary: str, 
                        project_id: int = None, conversation_id: str = None) -> str:
         """Logs an agent event to the database"""
-=======
-
-    @kernel_function(description="Logs a schedule variance detected by the agent")
-    def log_schedule_variance(self, project_id: int, equipment_id: int, work_package_id: int, 
-                            milestone_id: int, p6_due_date: str, equipment_delivery_date: str, 
-                            days_variance: int, risk_flag: str, risk_description: str, 
-                            mitigation_action: str, conversation_id: str) -> str:
-        """Logs a schedule variance to the database"""
->>>>>>> Stashed changes
         try:
             # Connect to database
             conn = pyodbc.connect(self.connection_string)
             cursor = conn.cursor()
             
-<<<<<<< Updated upstream
             # Use existing conversation_id or create a new one
             if not conversation_id:
                 conversation_id = str(uuid.uuid4())
@@ -342,30 +327,12 @@ class EquipmentSchedulePlugin:
             
             # Execute stored procedure
             cursor.execute("EXEC sp_LogAgentEvent ?, ?, ?, ?, ?", params)
-=======
-            # Prepare parameters for stored procedure
-            params = (project_id, equipment_id, work_package_id, milestone_id, 
-                    p6_due_date, equipment_delivery_date, days_variance,
-                    risk_flag, risk_description, mitigation_action, conversation_id)
-            
-            # Execute stored procedure with output parameter
-            cursor.execute("""
-                DECLARE @variance_id INT;
-                EXEC sp_LogScheduleVariance ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, @variance_id OUTPUT;
-                SELECT @variance_id AS variance_id;
-            """, params)
-            
-            # Get the variance_id
-            result = cursor.fetchone()
-            variance_id = result.variance_id if result else None
->>>>>>> Stashed changes
             
             # Commit and close connection
             conn.commit()
             cursor.close()
             conn.close()
             
-<<<<<<< Updated upstream
             # Return success message with the conversation_id
             return json.dumps({"success": True, "conversation_id": conversation_id})
             
@@ -402,10 +369,6 @@ class EquipmentSchedulePlugin:
             
             # Return as JSON string
             return json.dumps(logs, default=str)
-=======
-            # Return success message with the variance_id
-            return json.dumps({"success": True, "variance_id": variance_id})
->>>>>>> Stashed changes
             
         except Exception as e:
             return json.dumps({"error": str(e)})

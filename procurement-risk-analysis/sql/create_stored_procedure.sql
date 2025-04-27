@@ -1,4 +1,7 @@
-CREATE PROCEDURE sp_GetScheduleComparisonData
+-- Script to create all stored procedures
+
+-- Create or alter the first stored procedure
+CREATE OR ALTER PROCEDURE sp_GetScheduleComparisonData
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -10,6 +13,8 @@ BEGIN
         p.project_id,
         p.project_name,
         p.project_code,
+        p.project_country,
+        p.project_location,
         eq.equipment_id,
         eq.equipment_code,
         eq.equipment_name,
@@ -59,8 +64,9 @@ BEGIN
         -- You might want to make this configurable or include all milestones
         m.milestone_id = 7;
 END;
+GO
 
-
+-- Create or alter the second stored procedure
 CREATE OR ALTER PROCEDURE sp_LogScheduleVariance
     @project_id INT,
     @equipment_id INT,
@@ -111,13 +117,16 @@ BEGIN
     
     RETURN @variance_id;
 END;
+GO
 
-CREATE OR ALTER PROCEDURE sp_LogAgentEvent
+-- Create or alter the third stored procedure
+CREATE PROCEDURE sp_LogAgentEvent
     @agent_name VARCHAR(100),
     @action VARCHAR(100),
-    @project_id INT = NULL,
-    @result_summary VARCHAR(1000),
-    @conversation_id UNIQUEIDENTIFIER
+    @result_summary VARCHAR(1000) = NULL,
+    @conversation_id UNIQUEIDENTIFIER,
+    @user_query NVARCHAR(MAX) = NULL,
+    @agent_output NVARCHAR(MAX) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -128,8 +137,9 @@ BEGIN
         agent_name,
         event_time,
         action,
-        project_id,
         result_summary,
+        user_query,
+        agent_output,
         conversation_id
     )
     VALUES (
@@ -137,8 +147,9 @@ BEGIN
         @agent_name,
         GETDATE(),
         @action,
-        @project_id,
         @result_summary,
+        @user_query,
+        @agent_output,
         @conversation_id
     );
 END;

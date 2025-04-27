@@ -1,8 +1,12 @@
+-- Script to create all tables with the latest structure
+
 -- Create Dimension Tables
 CREATE TABLE dim_project (
     project_id INT IDENTITY(1,1) PRIMARY KEY,
     project_code VARCHAR(20) NOT NULL,
     project_name VARCHAR(100) NOT NULL,
+    project_country VARCHAR(100),
+    project_location VARCHAR(255),
     created_date DATETIME DEFAULT GETDATE(),
     modified_date DATETIME DEFAULT GETDATE(),
     CONSTRAINT uq_project_code UNIQUE (project_code)
@@ -195,6 +199,7 @@ CREATE TABLE fact_risk_action_item (
     modified_date DATETIME DEFAULT GETDATE(),
     CONSTRAINT fk_risk_action_item_variance FOREIGN KEY (variance_id) REFERENCES fact_schedule_variance(variance_id)
 );
+
 CREATE TABLE dim_agent_event_log (
     log_id INT IDENTITY(1,1) PRIMARY KEY,
     event_id UNIQUEIDENTIFIER NOT NULL,
@@ -208,20 +213,8 @@ CREATE TABLE dim_agent_event_log (
     created_date DATETIME DEFAULT GETDATE()
 );
 
--- Create the table with all the fields we want
-CREATE TABLE dim_agent_thinking_log (
-    thinking_id INT IDENTITY(1,1) PRIMARY KEY,
-    agent_name VARCHAR(100) NOT NULL,
-    thinking_stage VARCHAR(50) NOT NULL,
-    thought_content NVARCHAR(MAX) NOT NULL,
-    conversation_id VARCHAR(100) NOT NULL,
-    session_id VARCHAR(100) NULL,
-    azure_agent_id VARCHAR(100) NULL,
-    model_deployment_name VARCHAR(100) NULL,
-    created_date DATETIME DEFAULT GETDATE()
-);
 
-CREATE TABLE dim_agent_thinking_log_enhanced (
+CREATE TABLE dim_agent_thinking_log (
     thinking_id INT IDENTITY(1,1) PRIMARY KEY,
     agent_name VARCHAR(100) NOT NULL,
     thinking_stage VARCHAR(50) NOT NULL,
