@@ -56,21 +56,20 @@ def render_thinking_logs_tab():
     
     # View logs button
     if st.button("View Logs"):
-        # Query logs based on filters
         try:
-            # Use the enhanced thinking logger plugin to get logs
-            from plugins.enhanced_thinking_logger import EnhancedThinkingLoggerPlugin
+            # Use the logging plugin to get logs
+            from plugins.logging_plugin import LoggingPlugin
             from config.settings import get_database_connection_string
             
             # Initialize the plugin
             connection_string = get_database_connection_string()
-            thinking_logger = EnhancedThinkingLoggerPlugin(connection_string)
+            logging_plugin = LoggingPlugin(connection_string)
             
             # Build query parameters
             agent_name = None if agent_filter == "All" else agent_filter
             
             # Get logs
-            logs_json = thinking_logger.get_enhanced_thinking_logs(
+            logs_json = logging_plugin.get_agent_thinking_logs(
                 conversation_id=conversation_id if conversation_id else None,
                 session_id=session_id if session_id else None,
                 agent_name=agent_name,
@@ -84,28 +83,29 @@ def render_thinking_logs_tab():
                 return
             
             # Convert to DataFrame for easier filtering
-            df = pd.DataFrame(logs)
-            
-            # Apply additional filters
-            if not df.empty:
-                # Filter by search term
-                if search_term:
-                    df = df[df["thought_content"].str.contains(search_term, case=False, na=False)]
+            if logs:
+                df = pd.DataFrame(logs)
                 
-                # Filter by date
-                if "created_date" in df.columns:
-                    df["created_date"] = pd.to_datetime(df["created_date"])
-                    start_datetime = pd.to_datetime(start_date)
-                    end_datetime = pd.to_datetime(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
-                    df = df[(df["created_date"] >= start_datetime) & (df["created_date"] <= end_datetime)]
-                
-                # Filter by status
-                if "status" in df.columns and status_filter:
-                    df = df[df["status"].isin(status_filter)]
-                
-                # Sort by created_date
-                if "created_date" in df.columns:
-                    df = df.sort_values("created_date", ascending=False)
+                # Apply additional filters
+                if not df.empty:
+                    # Filter by search term
+                    if search_term:
+                        df = df[df["thought_content"].str.contains(search_term, case=False, na=False)]
+                    
+                    # Filter by date
+                    if "created_date" in df.columns:
+                        df["created_date"] = pd.to_datetime(df["created_date"])
+                        start_datetime = pd.to_datetime(start_date)
+                        end_datetime = pd.to_datetime(end_date) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)
+                        df = df[(df["created_date"] >= start_datetime) & (df["created_date"] <= end_datetime)]
+                    
+                    # Filter by status
+                    if "status" in df.columns and status_filter:
+                        df = df[df["status"].isin(status_filter)]
+                    
+                    # Sort by created_date
+                    if "created_date" in df.columns:
+                        df = df.sort_values("created_date", ascending=False)
                 
                 # Display the logs
                 if df.empty:
@@ -157,6 +157,11 @@ def render_thinking_logs_tab():
                         # Show thought content
                         st.write("**Thought Content:**")
                         st.write(row.get("thought_content", "No content"))
+                        
+                        # Show agent output if available
+                        if row.get("agent_output"):
+                            st.write("**Agent Output:**")
+                            st.code(row.get("agent_output"))
             else:
                 st.info("No logs found")
                 
@@ -181,49 +186,71 @@ def render_thread_analysis_tab():
     # Add a button to analyze threads
     if st.button("Analyze Threads"):
         try:
-            # Check if we have a chatbot manager in session state
-            if "chatbot_manager" in st.session_state:
-                chatbot_manager = st.session_state.chatbot_manager
+            # Import necessary modules
+            from plugins.logging_plugin import LoggingPlugin
+            from config.settings import get_database_connection_string
+            
+            # Initialize the plugin
+            connection_string = get_database_connection_string()
+            logging_plugin = LoggingPlugin(connection_string)
+            
+            # Get logs for analysis
+            logs_json = logging_plugin.get_agent_thinking_logs(
+                conversation_id=conversation_id if conversation_id else None,
+                session_id=session_id if session_id else None,
+                limit=5000
+            )
+            
+            logs = json.loads(logs_json)
+            
+            if isinstance(logs, dict) and "error" in logs:
+                st.error(f"Error retrieving logs: {logs['error']}")
+                return
+            
+            if logs:
+                df = pd.DataFrame(logs)
                 
-                # Apply nest_asyncio to allow running asyncio in Streamlit
-                import nest_asyncio
-                nest_asyncio.apply()
-                
-                # Run the get_thread_info method
-                import asyncio
-                loop = asyncio.get_event_loop()
-                thread_info = loop.run_until_complete(
-                    chatbot_manager.get_thread_info(
-                        conversation_id=conversation_id if conversation_id else None,
-                        session_id=session_id if session_id else None
-                    )
-                )
-                
-                if "error" in thread_info:
-                    st.error(f"Error analyzing threads: {thread_info['error']}")
-                    return
-                
-                # Display thread statistics
-                st.write(f"Found {thread_info.get('total_threads', 0)} threads")
-                
-                # Display each thread's information
-                for thread_id, data in thread_info.get("threads", {}).items():
-                    with st.expander(f"Thread: {thread_id}"):
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.write(f"**First seen:** {data.get('first_seen', 'N/A')}")
-                            st.write(f"**Thinking steps:** {data.get('thinking_steps', 0)}")
-                            st.write(f"**Errors:** {data.get('errors', 0)}")
-                        with col2:
-                            st.write(f"**Last seen:** {data.get('last_seen', 'N/A')}")
-                            st.write(f"**Conversations:** {len(data.get('conversation_ids', []))}")
-                            st.write(f"**Agents:** {', '.join(data.get('agents', []))}")
-                        
-                        # Display conversation IDs
-                        st.write("**Conversation IDs:**")
-                        st.code("\n".join(data.get("conversation_ids", [])))
+                # Analyze threads
+                if "thread_id" in df.columns:
+                    thread_stats = df.groupby("thread_id").agg({
+                        "thinking_id": "count",
+                        "agent_name": lambda x: list(x.unique()),
+                        "created_date": ["min", "max"],
+                        "status": lambda x: dict(x.value_counts()),
+                        "conversation_id": lambda x: list(x.unique())
+                    }).reset_index()
+                    
+                    st.write(f"Found {len(thread_stats)} unique threads")
+                    
+                    # Display thread information
+                    for i, thread in thread_stats.iterrows():
+                        with st.expander(f"Thread: {thread['thread_id']}"):
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.write(f"**First seen:** {thread['created_date']['min']}")
+                                st.write(f"**Thinking steps:** {thread['thinking_id']['count']}")
+                                
+                                status_counts = thread['status']['<lambda>']
+                                errors = status_counts.get('error', 0)
+                                st.write(f"**Errors:** {errors}")
+                            with col2:
+                                st.write(f"**Last seen:** {thread['created_date']['max']}")
+                                st.write(f"**Conversations:** {len(thread['conversation_id']['<lambda>'])}")
+                                st.write(f"**Agents:** {', '.join(thread['agent_name']['<lambda>'])}")
+                            
+                            # Display status breakdown
+                            st.write("**Status breakdown:**")
+                            status_df = pd.DataFrame.from_dict(status_counts, orient='index', columns=['Count'])
+                            st.dataframe(status_df)
+                            
+                            # Display conversation IDs
+                            st.write("**Conversation IDs:**")
+                            for conv_id in thread['conversation_id']['<lambda>']:
+                                st.code(conv_id)
+                else:
+                    st.info("No thread information available in the logs")
             else:
-                st.warning("Chatbot manager not initialized. Please start a chat session first.")
+                st.info("No logs found")
         except Exception as e:
             st.error(f"Error analyzing threads: {str(e)}")
             import traceback
@@ -235,15 +262,15 @@ def render_stats_tab():
     
     try:
         # Query logs for statistics
-        from plugins.enhanced_thinking_logger import EnhancedThinkingLoggerPlugin
+        from plugins.logging_plugin import LoggingPlugin
         from config.settings import get_database_connection_string
         
         # Initialize the plugin
         connection_string = get_database_connection_string()
-        thinking_logger = EnhancedThinkingLoggerPlugin(connection_string)
+        logging_plugin = LoggingPlugin(connection_string)
         
         # Get all logs
-        logs_json = thinking_logger.get_enhanced_thinking_logs(limit=5000)  # Adjust limit as needed
+        logs_json = logging_plugin.get_agent_thinking_logs(limit=5000)  # Adjust limit as needed
         logs = json.loads(logs_json)
         
         if isinstance(logs, dict) and "error" in logs:

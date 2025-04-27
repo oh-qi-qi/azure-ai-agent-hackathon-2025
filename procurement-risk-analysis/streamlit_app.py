@@ -23,8 +23,10 @@ try:
     from managers.chatbot_manager import ChatbotManager
     from managers.scheduler import WorkflowScheduler
     modules_imported = True
-except ImportError:
+except ImportError as e:
     modules_imported = False
+    print(f"Import error: {e}")
+    print(f"Python path: {sys.path}")
     st.warning("Could not import modules directly. Will try to use API or direct module loading.")
 
 # Initialize session state
@@ -68,24 +70,49 @@ def load_scheduler_module():
 
 # Function to dynamically load the chatbot module
 def load_chatbot_module():
+    """Load the chatbot module dynamically with improved error handling."""
     if modules_imported:
-        connection_string = get_database_connection_string()
-        return ChatbotManager(connection_string)
+        try:
+            connection_string = get_database_connection_string()
+            return ChatbotManager(connection_string)
+        except Exception as e:
+            st.error(f"Failed to load ChatbotManager normally: {e}")
+            # Fall back to dynamic loading
     
     # Try to import the module dynamically
     try:
         spec = importlib.util.spec_from_file_location("managers.chatbot_manager", "managers/chatbot_manager.py")
+        if spec is None:
+            st.error("Could not find chatbot_manager.py in managers directory")
+            return None
+            
         chatbot_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(chatbot_module)
+        if chatbot_module is None:
+            st.error("Failed to create module from spec")
+            return None
+            
+        try:
+            spec.loader.exec_module(chatbot_module)
+        except Exception as e:
+            st.error(f"Failed to execute chatbot module: {e}")
+            return None
         
         connection_string = os.getenv("DB_CONNECTION_STRING")
         if not connection_string:
             st.error("DB_CONNECTION_STRING environment variable not set")
             return None
             
-        return chatbot_module.ChatbotManager(connection_string)
+        # Try to instantiate the ChatbotManager
+        try:
+            return chatbot_module.ChatbotManager(connection_string)
+        except Exception as e:
+            st.error(f"Failed to instantiate ChatbotManager: {e}")
+            return None
+            
     except Exception as e:
         st.error(f"Could not load chatbot module: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 # Function to directly run the workflow without API
@@ -150,22 +177,107 @@ def send_chat_message_api(message):
 
 # Function to send a chat message directly
 def send_chat_message_direct(message):
-    chatbot_manager = load_chatbot_module()
-    if chatbot_manager:
-        # Store the chatbot manager in session state for cleanup later
-        st.session_state.chatbot_manager = chatbot_manager
+    """Send a chat message directly without using the API."""
+    try:
+        chatbot_manager = load_chatbot_module()
+        if chatbot_manager:
+            # Store the chatbot manager in session state for cleanup later
+            if "chatbot_manager" not in st.session_state:
+                st.session_state.chatbot_manager = chatbot_manager
+            
+            # Apply nest_asyncio to allow running asyncio in Streamlit
+            nest_asyncio.apply()
+            
+            # Process the message with a timeout
+            try:
+                # Create a new event loop if needed
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError as e:
+                    if str(e).startswith('There is no current event loop'):
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                    else:
+                        raise
+                
+                # Set a timeout for the message processing
+                future = asyncio.ensure_future(
+                    chatbot_manager.process_message(st.session_state.session_id, message)
+                )
+                
+                # Wait for the result with a timeout
+                try:
+                    response = loop.run_until_complete(
+                        asyncio.wait_for(future, timeout=300)  # 5 minute timeout
+                    )
+                except asyncio.TimeoutError:
+                    st.warning("The request timed out after 5 minutes. The agent might be processing complex requests or experiencing high load.")
+                    # Generate a new session ID to force session recreation
+                    st.session_state.session_id = str(uuid.uuid4())
+                    return {
+                        "status": "error",
+                        "error": "Request timed out. Please try a simpler request or wait a moment before retrying."
+                    }
+                
+                # Check if the error is a timeout
+                if response.get("status") == "error" and ("timed out" in response.get("error", "").lower() or 
+                                                         "timeout" in response.get("error", "").lower()):
+                    st.warning("The request timed out. This might be due to complex processing. Please try a simpler request or wait a moment before retrying.")
+                    # Generate a new session ID to force session recreation
+                    st.session_state.session_id = str(uuid.uuid4())
+                
+                return response
+                
+            except Exception as e:
+                st.error(f"Error processing message: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                
+                # If the session is corrupted, create a new one
+                if "Rate limit is exceeded" in str(e) or "timed out" in str(e).lower() or "Polling timed out" in str(e):
+                    st.warning("The agent encountered issues. Creating a new session...")
+                    # Generate a new session ID to force session recreation
+                    st.session_state.session_id = str(uuid.uuid4())
+                
+                return {
+                    "status": "error", 
+                    "error": f"Error: {str(e)}. Please try again in a moment."
+                }
+        else:
+            st.error("Could not load chatbot manager. Please check your environment and module installation.")
+            return {"status": "error", "error": "Could not load chatbot manager"}
+    except Exception as e:
+        st.error(f"Failed to process message: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "error": f"System error: {str(e)}"}
+
+
+# Add a function to reset the chat session if needed
+def reset_chat_session():
+    # Generate a new session ID
+    st.session_state.session_id = str(uuid.uuid4())
+    st.session_state.chat_history = []
+    
+    # Clean up any existing chatbot manager
+    if "chatbot_manager" in st.session_state:
+        try:
+            chatbot_manager = st.session_state.chatbot_manager
+            # Apply nest_asyncio to allow running asyncio in Streamlit
+            nest_asyncio.apply()
+            
+            # Run the cleanup in the event loop
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(
+                chatbot_manager.cleanup_sessions(max_age_minutes=0)
+            )
+        except Exception as e:
+            print(f"Error cleaning up sessions: {e}")
         
-        # Apply nest_asyncio to allow running asyncio in Streamlit
-        nest_asyncio.apply()
-        
-        # Process the message
-        loop = asyncio.get_event_loop()
-        response = loop.run_until_complete(
-            chatbot_manager.process_message(st.session_state.session_id, message)
-        )
-        return response
-    else:
-        return {"status": "error", "error": "Could not load chatbot manager"}
+        # Remove the chatbot manager from session state
+        del st.session_state.chatbot_manager
+    
+    st.success("Chat session has been reset!")
 
 # Function to handle message sending and processing
 def process_message():
@@ -178,24 +290,29 @@ def process_message():
     # Add user message to chat history
     st.session_state.chat_history.append({"role": "user", "content": user_message})
     
+    # Clear the input box BEFORE processing (this is key to fixing the StreamlitAPIException)
+    # We store the message temporarily and clear the input right away
+    temp_message = user_message
+    st.session_state.user_message = ""
+    
     # Process message via API or directly
     api_mode = st.session_state.get("api_mode", False)
     
     with st.spinner("Assistant is thinking..."):
         if api_mode:
-            response = send_chat_message_api(user_message)
+            response = send_chat_message_api(temp_message)
         else:
-            response = send_chat_message_direct(user_message)
+            response = send_chat_message_direct(temp_message)
     
     if response.get("status") == "success":
         assistant_message = response.get("response", "No response")
         # Add assistant message to chat history
         st.session_state.chat_history.append({"role": "assistant", "content": assistant_message})
     else:
-        st.error(f"Error: {response.get('error', 'Unknown error')}")
-    
-    # Clear the input box (safely)
-    st.session_state.user_message = ""
+        error_message = response.get('error', 'Unknown error')
+        st.error(f"Error: {error_message}")
+        # Add error message to chat history so user knows what happened
+        st.session_state.chat_history.append({"role": "assistant", "content": f"I encountered an error: {error_message}. Please try again."})
 
 # Streamlit interface
 st.title("Equipment Schedule Agent")
@@ -226,13 +343,21 @@ with st.sidebar:
     # Divider
     st.divider()
     
-    # Clear data
-    if st.button("Clear Chat History"):
-        st.session_state.chat_history = []
-        st.success("Chat history cleared!")
+    # Chat management
+    st.subheader("Chat Management")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Clear Chat History"):
+            st.session_state.chat_history = []
+            st.success("Chat history cleared!")
+    with col2:
+        if st.button("Reset Chat Session"):
+            reset_chat_session()
+            
+    st.caption("Reset Chat Session will create a new session ID and clean up resources.")
 
 # Create tabs for different functionalities
-tab1, tab2, tab3 = st.tabs(["Chat", "Schedule Analysis", "System Status"])
+tab1, tab2, tab3, tab4 = st.tabs(["Chat", "Schedule Analysis", "System Status", "Thinking Logs"])
 
 # Tab 1: Chat Interface
 with tab1:
@@ -381,6 +506,99 @@ with tab3:
                             st.code(log['agent_output'])
             else:
                 st.info("No thinking logs found for this run")
+
+# Tab 4: Thinking Logs
+with tab4:
+    # Import and render the thinking log viewer
+    try:
+        from utils.thinking_log_viewer import render_thinking_log_viewer
+        render_thinking_log_viewer()
+    except ImportError:
+        st.error("Could not import thinking log viewer. Make sure utils/thinking_log_viewer.py exists.")
+        
+        # Provide a basic thinking logs viewer if import fails
+        st.subheader("Agent Thinking Logs")
+        
+        # Add filters
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            conversation_id = st.text_input("Conversation ID (optional)")
+        with col2:
+            session_id = st.text_input("Session ID (optional)", 
+                                      value=st.session_state.get("session_id", ""))
+        with col3:
+            agent_filter = st.selectbox("Agent", 
+                                      ["All", "SCHEDULER_AGENT", "REPORTING_AGENT", "ASSISTANT_AGENT", "SYSTEM"])
+        
+        # View logs button
+        if st.button("View Logs", key="view_logs_tab4"):
+            try:
+                # Use the logging plugin to get logs
+                from plugins.logging_plugin import LoggingPlugin
+                connection_string = os.getenv("DB_CONNECTION_STRING")
+                logging_plugin = LoggingPlugin(connection_string)
+                
+                # Build query parameters
+                agent_name = None if agent_filter == "All" else agent_filter
+                
+                # Get logs
+                logs_json = logging_plugin.get_agent_thinking_logs(
+                    conversation_id=conversation_id if conversation_id else None,
+                    session_id=session_id if session_id else None,
+                    agent_name=agent_name,
+                    limit=1000
+                )
+                
+                logs = json.loads(logs_json)
+                
+                if isinstance(logs, dict) and "error" in logs:
+                    st.error(f"Error retrieving logs: {logs['error']}")
+                elif logs:
+                    st.write(f"Found {len(logs)} logs")
+                    
+                    # Display logs in an expandable format
+                    for log in logs:
+                        with st.expander(f"{log.get('agent_name', 'Unknown')} - {log.get('thinking_stage', 'Unknown')} - {log.get('created_date', 'Unknown date')}"):
+                            # Show status indicator
+                            status = log.get("status", "unknown")
+                            if status == "success":
+                                st.success(f"Status: {status}")
+                            elif status == "error":
+                                st.error(f"Status: {status}")
+                            else:
+                                st.info(f"Status: {status}")
+                            
+                            # Show key metadata
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.write(f"**Conversation ID:** {log.get('conversation_id', 'N/A')}")
+                                st.write(f"**Session ID:** {log.get('session_id', 'N/A')}")
+                                st.write(f"**Thread ID:** {log.get('thread_id', 'N/A')}")
+                            with col2:
+                                st.write(f"**Agent ID:** {log.get('azure_agent_id', 'N/A')}")
+                                st.write(f"**Model:** {log.get('model_deployment_name', 'N/A')}")
+                                st.write(f"**Created:** {log.get('created_date', 'N/A')}")
+                            
+                            # Show user query if available
+                            if log.get("user_query"):
+                                st.write("**User Query:**")
+                                st.info(log.get("user_query"))
+                            
+                            # Show thought content
+                            st.write("**Thought Content:**")
+                            st.write(log.get("thought_content", "No content"))
+                            
+                            # Show agent output if available
+                            if log.get("agent_output"):
+                                st.write("**Agent Output:**")
+                                st.code(log.get("agent_output"))
+                else:
+                    st.info("No logs found")
+                    
+            except Exception as e:
+                st.error(f"Error retrieving logs: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc())
 
 # Footer
 st.divider()

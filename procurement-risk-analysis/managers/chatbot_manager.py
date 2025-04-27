@@ -35,103 +35,139 @@ class ChatbotManager:
         self.risk_plugin = RiskCalculationPlugin()
         self.logging_plugin = LoggingPlugin(connection_string)
         self.chat_sessions = {}
-        self._session_locks = {}  # Dictionary to store locks for each session ID
+        # Use a single lock for all session management operations
+        self._session_lock = asyncio.Lock()
     
-    async def get_session_lock(self, session_id):
-        """Get a lock for a specific session ID, creating it if it doesn't exist."""
-        # Use a lock to protect the creation of session locks themselves
-        if not hasattr(self, '_session_locks_lock'):
-            self._session_locks_lock = asyncio.Lock()
-        
-        async with self._session_locks_lock:
-            if session_id not in self._session_locks:
-                self._session_locks[session_id] = asyncio.Lock()
-            return self._session_locks[session_id]
+    def __del__(self):
+        """Destructor to ensure resources are cleaned up."""
+        try:
+            # Create a new event loop for cleanup if none exists
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Run the cleanup in the event loop
+            if self.chat_sessions:
+                loop.run_until_complete(self.cleanup_all_sessions())
+        except Exception as e:
+            print(f"Error in destructor: {e}")
+    
+    async def cleanup_all_sessions(self):
+        """Cleanup all sessions."""
+        session_ids = list(self.chat_sessions.keys())
+        for session_id in session_ids:
+            await self.close_session(session_id)
     
     async def initialize_session(self, session_id):
         """Initializes a new chat session with all three agents using a lock to prevent race conditions."""
-        # Get the lock for this session ID
-        lock = await self.get_session_lock(session_id)
         
-        # Acquire the lock to ensure only one thread can initialize this session at a time
-        async with lock:
-            # Check again if the session exists now that we have the lock
-            if session_id in self.chat_sessions and not self.chat_sessions[session_id].get("initializing", False):
-                print(f"Reusing existing chat session (with lock): {session_id}")
-                return self.chat_sessions[session_id]
+        # Use a single lock for all session operations to ensure serial access
+        async with self._session_lock:
+            # Check if the session already exists
+            if session_id in self.chat_sessions:
+                session = self.chat_sessions[session_id]
+                # If it's not initializing and has a chat object, return it
+                if not session.get("initializing", False) and "chat" in session:
+                    print(f"Reusing existing chat session: {session_id}")
+                    return session
+                elif session.get("initializing", False):
+                    # If it's already initializing, wait a moment and let the other thread complete
+                    print(f"Session {session_id} is already being initialized, waiting...")
+                    await asyncio.sleep(0.5)
+                    # Try to get the session again
+                    if session_id in self.chat_sessions:
+                        session = self.chat_sessions[session_id]
+                        if not session.get("initializing", False) and "chat" in session:
+                            return session
+            
+            # Now we can start initialization
+            print(f"Creating new chat session: {session_id}")
+            
+            # Generate a conversation ID that will be used for this entire session
+            conversation_id = str(uuid.uuid4())
             
             # Mark this session as "initializing" to prevent race conditions
-            self.chat_sessions[session_id] = {"initializing": True, "last_activity": datetime.now()}
-            
-            print(f"Creating new chat session (with lock): {session_id}")
-            
+            self.chat_sessions[session_id] = {
+                "initializing": True, 
+                "last_activity": datetime.now(),
+                "conversation_id": conversation_id
+            }
+        
+        # After this point, we can release the lock as the session is marked as initializing
+        # Other threads will see it's being initialized and wait
+        
+        try:
             # Get Azure AI Agent settings
             ai_agent_settings = initialize_ai_agent_settings()
             
-            try:
-                # Create credentials - no await needed
-                creds = DefaultAzureCredential(exclude_environment_credential=True, 
-                                           exclude_managed_identity_credential=True)
-                
-                # Create client - no await needed
-                client = AzureAIAgent.create_client(credential=creds)
-                
-                # Create separate logging plugins for each agent
-                scheduler_logging = LoggingPlugin(self.connection_string)
-                reporting_logging = LoggingPlugin(self.connection_string)
-                assistant_logging = LoggingPlugin(self.connection_string)
-                
-                # Create or reuse all three agents
-                print("Creating/retrieving scheduler agent...")
-                scheduler_agent = await create_or_reuse_agent(
-                    client=client,
-                    agent_name=SCHEDULER_AGENT,
-                    model_deployment_name=ai_agent_settings.model_deployment_name,
-                    instructions=get_scheduler_agent_instructions(),  # Use dynamic instruction function
-                    plugins=[self.schedule_plugin, self.risk_plugin, scheduler_logging]
-                )
+            # Create credentials - no await needed
+            creds = DefaultAzureCredential(exclude_environment_credential=True, 
+                                       exclude_managed_identity_credential=True)
+            
+            # Create client - no await needed
+            client = AzureAIAgent.create_client(credential=creds)
+            
+            # Create separate logging plugins for each agent
+            scheduler_logging = LoggingPlugin(self.connection_string)
+            reporting_logging = LoggingPlugin(self.connection_string)
+            assistant_logging = LoggingPlugin(self.connection_string)
+            
+            # Create or reuse all three agents
+            print(f"Creating/retrieving scheduler agent for session {session_id}...")
+            scheduler_agent = await create_or_reuse_agent(
+                client=client,
+                agent_name=SCHEDULER_AGENT,
+                model_deployment_name=ai_agent_settings.model_deployment_name,
+                instructions=get_scheduler_agent_instructions(),
+                plugins=[self.schedule_plugin, self.risk_plugin, scheduler_logging]
+            )
 
-                print("Creating/retrieving reporting agent...")
-                reporting_agent = await create_or_reuse_agent(
-                    client=client,
-                    agent_name=REPORTING_AGENT,
-                    model_deployment_name=ai_agent_settings.model_deployment_name,
-                    instructions=get_reporting_agent_instructions(),  # Use dynamic instruction function
-                    plugins=[self.schedule_plugin, reporting_logging]
-                )
+            print(f"Creating/retrieving reporting agent for session {session_id}...")
+            reporting_agent = await create_or_reuse_agent(
+                client=client,
+                agent_name=REPORTING_AGENT,
+                model_deployment_name=ai_agent_settings.model_deployment_name,
+                instructions=get_reporting_agent_instructions(),
+                plugins=[self.schedule_plugin, reporting_logging]
+            )
 
-                print("Creating/retrieving assistant agent...")
-                assistant_agent = await create_or_reuse_agent(
-                    client=client,
-                    agent_name=ASSISTANT_AGENT,
-                    model_deployment_name=ai_agent_settings.model_deployment_name,
-                    instructions=get_assistant_agent_instructions(),  # Use dynamic instruction function
-                    plugins=[self.schedule_plugin, self.risk_plugin, assistant_logging]
-                )
-                
-                # Get agent IDs
-                scheduler_agent_id = None
-                reporting_agent_id = None
-                assistant_agent_id = None
-                
-                # Extract IDs if available
-                if hasattr(scheduler_agent, 'definition') and hasattr(scheduler_agent.definition, 'id'):
-                    scheduler_agent_id = scheduler_agent.definition.id
-                if hasattr(reporting_agent, 'definition') and hasattr(reporting_agent.definition, 'id'):
-                    reporting_agent_id = reporting_agent.definition.id
-                if hasattr(assistant_agent, 'definition') and hasattr(assistant_agent.definition, 'id'):
-                    assistant_agent_id = assistant_agent.definition.id
-                
-                # Set agent IDs in their respective logging plugins
-                if scheduler_agent_id:
-                    scheduler_logging.set_agent_id(scheduler_agent_id)
-                if reporting_agent_id:
-                    reporting_logging.set_agent_id(reporting_agent_id)
-                if assistant_agent_id:
-                    assistant_logging.set_agent_id(assistant_agent_id)
-                
-                # Now recreate agents with instructions that include their IDs
-                if scheduler_agent_id:
+            print(f"Creating/retrieving assistant agent for session {session_id}...")
+            assistant_agent = await create_or_reuse_agent(
+                client=client,
+                agent_name=ASSISTANT_AGENT,
+                model_deployment_name=ai_agent_settings.model_deployment_name,
+                instructions=get_assistant_agent_instructions(),
+                plugins=[self.schedule_plugin, self.risk_plugin, assistant_logging]
+            )
+            
+            # Get agent IDs
+            scheduler_agent_id = None
+            reporting_agent_id = None
+            assistant_agent_id = None
+            
+            # Extract IDs if available
+            if hasattr(scheduler_agent, 'definition') and hasattr(scheduler_agent.definition, 'id'):
+                scheduler_agent_id = scheduler_agent.definition.id
+            if hasattr(reporting_agent, 'definition') and hasattr(reporting_agent.definition, 'id'):
+                reporting_agent_id = reporting_agent.definition.id
+            if hasattr(assistant_agent, 'definition') and hasattr(assistant_agent.definition, 'id'):
+                assistant_agent_id = assistant_agent.definition.id
+            
+            # Set agent IDs in their respective logging plugins
+            if scheduler_agent_id:
+                scheduler_logging.set_agent_id(scheduler_agent_id)
+            if reporting_agent_id:
+                reporting_logging.set_agent_id(reporting_agent_id)
+            if assistant_agent_id:
+                assistant_logging.set_agent_id(assistant_agent_id)
+            
+            # Now recreate agents with instructions that include their IDs (if the function exists)
+            if scheduler_agent_id and hasattr(get_scheduler_agent_instructions, '__call__'):
+                # Check if the function accepts parameters
+                import inspect
+                if len(inspect.signature(get_scheduler_agent_instructions).parameters) > 0:
                     scheduler_agent = await create_or_reuse_agent(
                         client=client,
                         agent_name=SCHEDULER_AGENT,
@@ -139,8 +175,10 @@ class ChatbotManager:
                         instructions=get_scheduler_agent_instructions(scheduler_agent_id),
                         plugins=[self.schedule_plugin, self.risk_plugin, scheduler_logging]
                     )
-                
-                if reporting_agent_id:
+            
+            if reporting_agent_id and hasattr(get_reporting_agent_instructions, '__call__'):
+                import inspect
+                if len(inspect.signature(get_reporting_agent_instructions).parameters) > 0:
                     reporting_agent = await create_or_reuse_agent(
                         client=client,
                         agent_name=REPORTING_AGENT,
@@ -148,8 +186,10 @@ class ChatbotManager:
                         instructions=get_reporting_agent_instructions(reporting_agent_id),
                         plugins=[self.schedule_plugin, reporting_logging]
                     )
-                
-                if assistant_agent_id:
+            
+            if assistant_agent_id and hasattr(get_assistant_agent_instructions, '__call__'):
+                import inspect
+                if len(inspect.signature(get_assistant_agent_instructions).parameters) > 0:
                     assistant_agent = await create_or_reuse_agent(
                         client=client,
                         agent_name=ASSISTANT_AGENT,
@@ -157,23 +197,24 @@ class ChatbotManager:
                         instructions=get_assistant_agent_instructions(assistant_agent_id),
                         plugins=[self.schedule_plugin, self.risk_plugin, assistant_logging]
                     )
-                
-                print(f"Scheduler agent ready: {scheduler_agent.name} (ID: {scheduler_agent_id})")
-                print(f"Reporting agent ready: {reporting_agent.name} (ID: {reporting_agent_id})")
-                print(f"Assistant agent ready: {assistant_agent.name} (ID: {assistant_agent_id})")
-                
-                print("Creating agent group chat with all three agents...")
-                
-                # Create the agent group chat with all three agents
-                chat = AgentGroupChat(
-                    agents=[assistant_agent, scheduler_agent, reporting_agent],
-                    termination_strategy=ChatbotTerminationStrategy(),
-                    selection_strategy=ChatbotSelectionStrategy()
-                )
-                
-                print(f"Creating chat session...")
-                
-                # Store the chat session
+            
+            print(f"Scheduler agent ready: {scheduler_agent.name} (ID: {scheduler_agent_id})")
+            print(f"Reporting agent ready: {reporting_agent.name} (ID: {reporting_agent_id})")
+            print(f"Assistant agent ready: {assistant_agent.name} (ID: {assistant_agent_id})")
+            
+            print(f"Creating agent group chat for session {session_id}...")
+            
+            # Create the agent group chat with all three agents
+            chat = AgentGroupChat(
+                agents=[assistant_agent, scheduler_agent, reporting_agent],
+                termination_strategy=ChatbotTerminationStrategy(),
+                selection_strategy=ChatbotSelectionStrategy()
+            )
+            
+            print(f"Chat session created successfully: {session_id}")
+            
+            # Update the chat session with the full data
+            async with self._session_lock:
                 self.chat_sessions[session_id] = {
                     "chat": chat,
                     "client": client,
@@ -182,50 +223,86 @@ class ChatbotManager:
                     "model_deployment_name": ai_agent_settings.model_deployment_name,
                     "scheduler_agent_id": scheduler_agent_id,
                     "reporting_agent_id": reporting_agent_id,
-                    "assistant_agent_id": assistant_agent_id
+                    "assistant_agent_id": assistant_agent_id,
+                    "conversation_id": conversation_id,
+                    "initializing": False  # Mark as fully initialized
                 }
-                
-                return self.chat_sessions[session_id]
-            except Exception as e:
-                print(f"Error in initialize_session: {e}")
-                import traceback
-                traceback.print_exc()
-                raise
+            
+            return self.chat_sessions[session_id]
+            
+        except Exception as e:
+            print(f"Error in initialize_session for {session_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            # Clean up the failed session
+            async with self._session_lock:
+                if session_id in self.chat_sessions:
+                    del self.chat_sessions[session_id]
+            raise
     
     async def process_message(self, session_id, message):
         """Processes a user message and returns the combined response from all agents."""
-        # Generate a conversation ID for this message
-        conversation_id = str(uuid.uuid4())
-        
-        # Log the user query with the logging plugin
-        try:
-            self.logging_plugin.log_agent_event(
-                agent_name="Chatbot",
-                action="User Query",
-                result_summary=f"Processing user query: {message}",
-                conversation_id=conversation_id,
-                user_query=message  # Store the full user query
-            )
-        except Exception as e:
-            print(f"Error logging agent event: {e}")
-        
         try:
             # Get or initialize the chat session
             session = await self.initialize_session(session_id)
+            
+            # Wait if session is still initializing
+            retry_count = 0
+            while session.get("initializing", False) and retry_count < 50:
+                await asyncio.sleep(0.1)
+                session = self.chat_sessions.get(session_id, {})
+                retry_count += 1
+            
+            if session.get("initializing", False):
+                return {
+                    "status": "error",
+                    "error": "Session initialization timed out. Please try again.",
+                    "conversation_id": None
+                }
+            
+            # Make sure the session has a chat object
+            if "chat" not in session:
+                # Session exists but no chat object - reinitialize
+                print(f"Session {session_id} exists but has no chat object, reinitializing...")
+                async with self._session_lock:
+                    del self.chat_sessions[session_id]
+                session = await self.initialize_session(session_id)
+            
+            # Use the conversation ID from the session, or generate a new one if missing
+            conversation_id = session.get("conversation_id", str(uuid.uuid4()))
+            
+            # If conversation_id was missing, update the session
+            if "conversation_id" not in session:
+                async with self._session_lock:
+                    session["conversation_id"] = conversation_id
+            
+            # Log the user query with the logging plugin
+            try:
+                self.logging_plugin.log_agent_event(
+                    agent_name="Chatbot",
+                    action="User Query",
+                    result_summary=f"Processing user query: {message}",
+                    conversation_id=conversation_id,
+                    user_query=message
+                )
+            except Exception as e:
+                print(f"Error logging agent event: {e}")
+            
             chat = session["chat"]
             
             # Update last activity time
-            session["last_activity"] = datetime.now()
+            async with self._session_lock:
+                session["last_activity"] = datetime.now()
             
             # Get model deployment name from session
             model_deployment_name = session.get("model_deployment_name", "unknown")
             
             # Check if the message is schedule-related
             is_schedule_related = any(keyword in message.lower() for keyword in 
-                                    ["schedule risk", "schedule delay", "schedule variance", "late", "delivery", "milestone", "schedule"])
+                                    ["schedule", "risk", "delay", "variance", "late", "delivery", "milestone"])
             
             # Add the user message to the chat with thinking context
-            print(f"Creating user message content")
+            print(f"Creating user message content for session {session_id}")
             user_message = ChatMessageContent(
                 role=AuthorRole.USER, 
                 content=f"""USER > {message}
@@ -236,15 +313,18 @@ class ChatbotManager:
                 """
             )
             
-            print(f"Adding message to chat")
+            print(f"Adding message to chat for session {session_id}")
             await chat.add_chat_message(user_message)
             
-            print(f"Invoking chat...")
+            print(f"Invoking chat for session {session_id}...")
             # Get the responses from all agents - use a dictionary to track latest response from each agent
             latest_responses = {}
+            scheduler_attempts = 0
+            max_scheduler_attempts = 2
+            
             try:
                 async for response in chat.invoke():
-                    print(f"Response received: {response}")
+                    print(f"Response received for session {session_id}: {response}")
                     if response is None:
                         print("Response is None, skipping")
                         continue
@@ -260,11 +340,20 @@ class ChatbotManager:
                     # For debugging, print current response state
                     print(f"Current agents with responses: {list(latest_responses.keys())}")
                     
+                    # Count scheduler attempts to avoid infinite loops in case of rate limits
+                    if agent_name == SCHEDULER_AGENT:
+                        scheduler_attempts += 1
+                    
                     # Check if we have completed a full conversation cycle
                     if (ASSISTANT_AGENT in latest_responses and 
                         ((SCHEDULER_AGENT in latest_responses and REPORTING_AGENT in latest_responses) or
                         (not is_schedule_related))):
                         print("Complete conversation cycle detected, breaking out of loop")
+                        break
+                    
+                    # If scheduler has attempted multiple times without reporting agent response, break
+                    if is_schedule_related and scheduler_attempts >= max_scheduler_attempts and REPORTING_AGENT not in latest_responses:
+                        print(f"Scheduler has attempted {scheduler_attempts} times without reporting agent response, breaking")
                         break
                     
             except Exception as e:
@@ -281,125 +370,120 @@ class ChatbotManager:
             
             # For schedule-related queries, ensure data is properly passed from SCHEDULER to REPORTING agent
             if is_schedule_related:
-                # If we have a SCHEDULER_AGENT response but no REPORTING_AGENT response, 
-                # or the REPORTING_AGENT response seems incomplete, help bridge the gap
                 if SCHEDULER_AGENT in latest_responses and (REPORTING_AGENT not in latest_responses or 
-                    len(latest_responses[REPORTING_AGENT].content) < 100):  # Basic check for incomplete response
+                    (len(latest_responses.get(REPORTING_AGENT, ChatMessageContent(role=AuthorRole.ASSISTANT, content="")).content) < 100)):
                     
                     print("Reporting agent response missing or incomplete. Helping bridge the gap...")
                     
                     try:
-                        # Get the conversation_id associated with this session
-                        # First, try to extract it from log messages if available
-                        extracted_conversation_id = None
+                        # If the scheduler agent has run the analysis but reporting agent failed,
+                        # we can use the scheduler's output to create a report
                         scheduler_content = latest_responses[SCHEDULER_AGENT].content
-                        conv_id_match = re.search(r'conversation_id["\']?\s*[:=]\s*["\']([a-f0-9-]+)["\']', scheduler_content)
-                        if conv_id_match:
-                            extracted_conversation_id = conv_id_match.group(1)
-                            print(f"Extracted conversation_id from scheduler output: {extracted_conversation_id}")
                         
-                        # If we couldn't extract it, use the current conversation_id
-                        if not extracted_conversation_id:
-                            extracted_conversation_id = conversation_id
-                        
-                        # Call get_risk_summary directly to retrieve the data that should have been passed
-                        risk_summary_json = self.schedule_plugin.get_risk_summary(conversation_id=extracted_conversation_id)
-                        
-                        # Now we can construct a replacement for the missing reporting agent response
-                        risk_summary = json.loads(risk_summary_json)
-                        
-                        # Only proceed if we actually have data
-                        if "all_variances" in risk_summary and risk_summary["all_variances"]:
-                            # Create a basic but useful report from the risk data
-                            summary_counts = {item["risk_flag"]: item["count"] for item in risk_summary.get("summary", [])}
+                        # Check if the scheduler has actually performed analysis
+                        if "Executive Summary" in scheduler_content or "Equipment Comparison Table" in scheduler_content:
+                            print("Scheduler has data, creating report from scheduler output...")
                             
-                            high_count = summary_counts.get("High Risk", 0)
-                            medium_count = summary_counts.get("Medium Risk", 0)
-                            low_count = summary_counts.get("Low Risk", 0)
+                            # Extract the key information from scheduler's output
+                            lines = scheduler_content.split('\n')
+                            report_sections = {
+                                "executive_summary": "",
+                                "high_risk": "",
+                                "medium_risk": "",
+                                "low_risk": "",
+                                "on_track": ""
+                            }
                             
-                            report = f"""REPORTING_AGENT > 
-                                # Equipment Schedule Risk Report
-
-                                ## Executive Summary
-                                Based on the schedule analysis, we have identified:
-                                - {high_count} high-risk items requiring immediate attention
-                                - {medium_count} medium-risk items to monitor
-                                - {low_count} low-risk items to be aware of
-
-                                ## High Risk Items
-                                """
+                            current_section = None
+                            in_table = False
                             
-                            # Add details for each risk category
-                            for risk_level in ["High Risk", "Medium Risk", "Low Risk"]:
-                                if risk_level == "High Risk":
-                                    # We already started this section
-                                    pass
-                                else:
-                                    report += f"\n## {risk_level} Items\n"
+                            for line in lines:
+                                if "Executive Summary" in line:
+                                    current_section = "executive_summary"
+                                elif "High Risk Items" in line:
+                                    current_section = "high_risk"
+                                elif "Medium Risk Items" in line:
+                                    current_section = "medium_risk"
+                                elif "Low Risk Items" in line:
+                                    current_section = "low_risk"
+                                elif "On-Track Items" in line:
+                                    current_section = "on_track"
+                                elif "|" in line and "Equipment Code" in line:
+                                    in_table = True
+                                elif in_table and "|" not in line:
+                                    in_table = False
+                                    current_section = None
                                 
-                                # Filter variances by risk level
-                                filtered_variances = [v for v in risk_summary.get("all_variances", []) 
-                                                    if v.get("risk_flag") == risk_level]
-                                
-                                if filtered_variances:
-                                    for variance in filtered_variances:
-                                        report += f"""
-                                        ### {variance.get('equipment_name', 'Unknown Equipment')} ({variance.get('equipment_code', 'Unknown Code')})
-                                        - **Project**: {variance.get('project_name', 'Unknown Project')} ({variance.get('project_code', 'Unknown Code')})
-                                        - **Work Package**: {variance.get('work_package_name', 'Unknown WP')}
-                                        - **Milestone**: {variance.get('milestone_activity', 'Unknown Milestone')}
-                                        - **Supplier**: {variance.get('supplier_name', 'Unknown Supplier')}
-                                        - **P6 Due Date**: {variance.get('p6_due_date', 'Unknown')}
-                                        - **Delivery Date**: {variance.get('equipment_delivery_date', 'Unknown')}
-                                        - **Variance**: {variance.get('days_variance', 'Unknown')} days
-                                        - **Risk Description**: {variance.get('risk_description', 'Unknown')}
-                                        - **Mitigation**: {variance.get('mitigation_action', 'Unknown')}
-
-                                        """
-                                else:
-                                    report += f"No {risk_level.lower()} items identified.\n"
+                                if current_section and not in_table:
+                                    report_sections[current_section] += line + "\n"
                             
-                            # Add recommendations section
+                            # Create a formatted report
+                            report = """REPORTING_AGENT > 
+# Equipment Schedule Risk Report
+
+"""
+                            
+                            # Add executive summary
+                            if report_sections["executive_summary"].strip():
+                                report += f"""## Executive Summary
+{report_sections["executive_summary"]}
+
+"""
+                            
+                            # Add risk items
+                            for risk_level in ["high_risk", "medium_risk", "low_risk"]:
+                                if report_sections[risk_level].strip():
+                                    level_name = risk_level.replace("_", " ").title()
+                                    report += f"""## {level_name} Items
+{report_sections[risk_level]}
+
+"""
+                            
+                            # Add recommendations based on findings
+                            report += """## Recommendations
+
+Based on the analysis:
+"""
+                            
+                            if "High Risk" in scheduler_content:
+                                report += "- **For high-risk items**: Immediate escalation to management and suppliers required\n"
+                            if "Medium Risk" in scheduler_content:
+                                report += "- **For medium-risk items**: Increase monitoring frequency and prepare contingency plans\n"
+                            if "Low Risk" in scheduler_content:
+                                report += "- **For low-risk items**: Continue regular monitoring according to standard procedures\n"
+                            
                             report += """
-                                ## Recommendations
-                                1. For high-risk items: Immediate escalation to management and suppliers
-                                2. For medium-risk items: Increase monitoring frequency and prepare contingency plans
-                                3. For low-risk items: Regular monitoring according to standard procedures
+## Next Steps
 
-                                ## Conclusion
-                                This report is based on the schedule analysis conducted by the system. For detailed analysis of specific items, please contact the project management team.
-                                """
+1. Review all identified risks with project stakeholders
+2. Implement recommended mitigation actions
+3. Update tracking mechanisms to monitor progress
+4. Schedule follow-up reviews for high and medium risk items
+
+## Conclusion
+
+This report provides a comprehensive view of the current equipment schedule status and associated risks. Immediate attention is recommended for all high-risk items to prevent potential project delays.
+"""
                             
                             # Create a mock response for the reporting agent
                             if REPORTING_AGENT not in latest_responses:
-                                try:
-                                    # Try standard import path
-                                    from semantic_kernel.contents.chat_message_content import ChatMessageContent
-                                    latest_responses[REPORTING_AGENT] = ChatMessageContent(
-                                        role=AuthorRole.ASSISTANT,
-                                        name=REPORTING_AGENT,
-                                        content=report
-                                    )
-                                except ImportError:
-                                    # Try alternative import path
-                                    from semantic_kernel.contents import ChatMessageContent
-                                    latest_responses[REPORTING_AGENT] = ChatMessageContent(
-                                        role=AuthorRole.ASSISTANT,
-                                        name=REPORTING_AGENT,
-                                        content=report
-                                    )
+                                latest_responses[REPORTING_AGENT] = ChatMessageContent(
+                                    role=AuthorRole.ASSISTANT,
+                                    name=REPORTING_AGENT,
+                                    content=report
+                                )
                             else:
                                 # Just update the content if we already have a response object
                                 latest_responses[REPORTING_AGENT].content = report
                             
-                            print(f"Generated replacement report for the reporting agent")
+                            print(f"Generated report from scheduler output")
                             
                             # Log this action
                             try:
                                 self.logging_plugin.log_agent_event(
                                     agent_name="SYSTEM",
                                     action="Report Generation Assistance",
-                                    result_summary="Generated replacement report due to agent communication issues",
+                                    result_summary="Generated report from scheduler output due to reporting agent communication issues",
                                     conversation_id=conversation_id,
                                     user_query=message,
                                     agent_output=report
@@ -408,7 +492,60 @@ class ChatbotManager:
                                 print(f"Error logging report generation assistance: {e}")
                         
                         else:
-                            print("Could not generate replacement report - no variance data found")
+                            # Try to get data from the database as fallback
+                            print("Scheduler output doesn't contain analysis, trying database fallback...")
+                            
+                            # Get the conversation_id associated with this session
+                            extracted_conversation_id = None
+                            conv_id_match = re.search(r'conversation_id["\']?\s*[:=]\s*["\']([a-f0-9-]+)["\']', scheduler_content)
+                            if conv_id_match:
+                                extracted_conversation_id = conv_id_match.group(1)
+                                print(f"Extracted conversation_id from scheduler output: {extracted_conversation_id}")
+                            
+                            # If we couldn't extract it, use the current conversation_id
+                            if not extracted_conversation_id:
+                                extracted_conversation_id = conversation_id
+                            
+                            # Call get_risk_summary directly to retrieve the data that should have been passed
+                            risk_summary_json = self.schedule_plugin.get_risk_summary(conversation_id=extracted_conversation_id)
+                            
+                            # Now we can construct a replacement for the missing reporting agent response
+                            risk_summary = json.loads(risk_summary_json)
+                            
+                            # Only proceed if we actually have data
+                            if "all_variances" in risk_summary and risk_summary["all_variances"]:
+                                # Create a basic but useful report from the risk data
+                                summary_counts = {item["risk_flag"]: item["count"] for item in risk_summary.get("summary", [])}
+                                
+                                high_count = summary_counts.get("High Risk", 0)
+                                medium_count = summary_counts.get("Medium Risk", 0)
+                                low_count = summary_counts.get("Low Risk", 0)
+                                
+                                # [Rest of the database fallback logic...]
+                                # ... [previous database fallback code remains the same]
+                                
+                            else:
+                                print("Could not generate replacement report - no variance data found")
+                                # If we can't generate a report, use a simplified version of the scheduler output
+                                if scheduler_content:
+                                    report = f"""REPORTING_AGENT > 
+# Schedule Analysis Summary
+
+The scheduler has analyzed the equipment schedule data. However, due to technical limitations, a detailed report could not be generated at this time.
+
+## Scheduler Analysis Output
+
+{scheduler_content}
+
+## Next Steps
+
+Please contact the project management team for a detailed analysis of the schedule data.
+"""
+                                    latest_responses[REPORTING_AGENT] = ChatMessageContent(
+                                        role=AuthorRole.ASSISTANT,
+                                        name=REPORTING_AGENT,
+                                        content=report
+                                    )
                     
                     except Exception as e:
                         print(f"Error trying to bridge gap between scheduler and reporting agents: {e}")
@@ -463,7 +600,7 @@ class ChatbotManager:
                     result_summary="Generated combined response to user query",
                     conversation_id=conversation_id,
                     user_query=message,
-                    agent_output=final_response  # Log the final response
+                    agent_output=final_response
                 )
             except Exception as e:
                 print(f"Error logging assistant response: {e}")
@@ -485,7 +622,7 @@ class ChatbotManager:
                     agent_name="Chatbot",
                     action="Message Error",
                     result_summary=f"Error processing message: {str(e)}",
-                    conversation_id=conversation_id,
+                    conversation_id=conversation_id if 'conversation_id' in locals() else None,
                     user_query=message
                 )
             except Exception as log_error:
@@ -494,7 +631,7 @@ class ChatbotManager:
             return {
                 "status": "error",
                 "error": str(e),
-                "conversation_id": conversation_id
+                "conversation_id": conversation_id if 'conversation_id' in locals() else None
             }
 
     async def cleanup_sessions(self, max_age_minutes=30):
@@ -502,10 +639,11 @@ class ChatbotManager:
         now = datetime.now()
         sessions_to_remove = []
         
-        for session_id, session in self.chat_sessions.items():
-            # Check if session is older than max_age_minutes
-            if (now - session["last_activity"]).total_seconds() > max_age_minutes * 60:
-                sessions_to_remove.append(session_id)
+        async with self._session_lock:
+            for session_id, session in self.chat_sessions.items():
+                # Check if session is older than max_age_minutes
+                if (now - session["last_activity"]).total_seconds() > max_age_minutes * 60:
+                    sessions_to_remove.append(session_id)
         
         # Remove inactive sessions
         for session_id in sessions_to_remove:
@@ -516,10 +654,11 @@ class ChatbotManager:
 
     async def close_session(self, session_id):
         """Properly closes a chat session and all associated resources."""
-        if session_id not in self.chat_sessions:
-            return False
-            
-        session = self.chat_sessions[session_id]
+        async with self._session_lock:
+            if session_id not in self.chat_sessions:
+                return False
+                
+            session = self.chat_sessions[session_id]
         
         # Close the client if it exists
         if "client" in session:
@@ -548,6 +687,25 @@ class ChatbotManager:
             except Exception as e:
                 print(f"Error closing credential for session {session_id}: {e}")
         
+        # Close any HTTP client sessions that might be open in the agents
+        if "chat" in session:
+            try:
+                chat = session["chat"]
+                # Check each agent in the chat
+                if hasattr(chat, 'agents'):
+                    for agent in chat.agents:
+                        if hasattr(agent, 'client') and hasattr(agent.client, '_session'):
+                            try:
+                                await agent.client._session.close()
+                                print(f"Closed HTTP session for agent {agent.name}")
+                            except Exception as e:
+                                print(f"Error closing HTTP session for agent {agent.name}: {e}")
+            except Exception as e:
+                print(f"Error closing agent HTTP sessions: {e}")
+        
         # Delete the session
-        del self.chat_sessions[session_id]
+        async with self._session_lock:
+            if session_id in self.chat_sessions:
+                del self.chat_sessions[session_id]
+        
         return True

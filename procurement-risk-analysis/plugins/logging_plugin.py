@@ -4,6 +4,7 @@ import json
 import uuid
 import pyodbc
 from semantic_kernel.functions.kernel_function_decorator import kernel_function
+from azure.ai.projects import AIProjectClient
 
 class LoggingPlugin:
     """A consolidated plugin for all logging functions."""

@@ -2,6 +2,8 @@
 
 import os
 from semantic_kernel.agents import AzureAIAgentSettings
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
 
 def initialize_ai_agent_settings():
     """Initializes AI Agent settings from environment variables.
@@ -47,3 +49,15 @@ def get_database_connection_string():
     if not connection_string:
         raise ValueError("Missing required environment variable: DB_CONNECTION_STRING")
     return connection_string
+
+def get_project_client():
+    project_connection_string = os.getenv("AZURE_AI_AGENT_PROJECT_CONNECTION_STRING")
+    # Connect to the Azure AI Foundry project
+    project_client = AIProjectClient.from_connection_string(
+        credential=DefaultAzureCredential
+            (exclude_environment_credential=True,
+            exclude_managed_identity_credential=True),
+        conn_str=project_connection_string
+    )
+
+    return project_client
