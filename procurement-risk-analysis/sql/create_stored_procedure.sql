@@ -1,6 +1,6 @@
 -- Script to create all stored procedures
 
--- Create or alter the first stored procedure
+-- Enhanced stored procedure that returns all data needed for various risk agents
 CREATE OR ALTER PROCEDURE sp_GetScheduleComparisonData
 AS
 BEGIN
@@ -8,8 +8,8 @@ BEGIN
 
     DECLARE @today DATE = CAST(GETDATE() AS DATE);
     
-    -- Return raw comparison data for the agent to analyze
     SELECT 
+        -- Basic project and equipment info
         p.project_id,
         p.project_name,
         p.project_code,
@@ -25,17 +25,34 @@ BEGIN
         m.milestone_id,
         m.milestone_number,
         m.milestone_activity,
+        
+        -- Schedule dates
         ps.p6_schedule_due_date,
         ems.equipment_milestone_due_date,
         DATEDIFF(DAY, ps.p6_schedule_due_date, ems.equipment_milestone_due_date) AS days_variance,
         DATEDIFF(DAY, @today, ps.p6_schedule_due_date) AS days_until_p6_due,
+        
+        -- Supplier info
         s.supplier_id,
         s.supplier_name,
         s.supplier_number,
         po.purchase_order_id,
         po.purchase_order_number,
         po.line_item,
-        po.amount
+        po.amount,
+        es.lead_time_days AS supplier_lead_time,
+        
+        -- Manufacturing location data (for Political & Tariff risk)
+        ml.location_address AS manufacturing_location,
+        
+        -- Logistics data (for Logistics risk)
+        li.shipping_port,
+        li.receiving_port,
+        li.logistics_method,
+        
+        -- Alternative suppliers
+        alt.alternatives AS alternative_suppliers
+        
     FROM fact_p6_schedule ps
     JOIN fact_equipment_milestone_schedule ems ON 
         ps.equipment_id = ems.equipment_id AND 
@@ -48,7 +65,23 @@ BEGIN
     JOIN dim_milestone m ON ps.milestone_id = m.milestone_id
     JOIN fact_purchase_order po ON ems.purchase_order_id = po.purchase_order_id
     JOIN dim_supplier s ON po.supplier_id = s.supplier_id
-    -- Get a separate subquery with alternative suppliers info
+    
+    -- Join equipment supplier to get lead time
+    LEFT JOIN dim_equipment_supplier es ON 
+        es.equipment_id = eq.equipment_id AND 
+        es.supplier_id = s.supplier_id
+    
+    -- Join manufacturing location
+    LEFT JOIN dim_manufacturing_location ml ON 
+        ml.equipment_id = eq.equipment_id AND 
+        ml.supplier_id = s.supplier_id
+    
+    -- Join logistics info
+    LEFT JOIN dim_logistics_info li ON 
+        li.equipment_id = eq.equipment_id AND 
+        li.supplier_id = s.supplier_id
+    
+    -- Alternative suppliers info
     OUTER APPLY (
         SELECT STUFF((
             SELECT ',' + alt_s.supplier_name + ' (Cost: ' + 
@@ -60,9 +93,7 @@ BEGIN
             FOR XML PATH('')), 1, 1, '') AS alternatives
     ) AS alt
     WHERE 
-        -- Only looking at delivery milestones (7 is "Delivery to Site" in our sample data)
-        -- You might want to make this configurable or include all milestones
-        m.milestone_id = 7;
+        m.milestone_id = 7; -- Delivery to Site milestone
 END;
 GO
 

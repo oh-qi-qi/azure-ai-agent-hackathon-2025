@@ -4,7 +4,9 @@ import uuid
 import asyncio
 import json
 import re
+import os
 from datetime import datetime
+from dotenv import load_dotenv
 
 from azure.identity.aio import DefaultAzureCredential
 from semantic_kernel.agents import AgentGroupChat
@@ -16,15 +18,23 @@ from config.settings import initialize_ai_agent_settings
 from agents.agent_definitions import (
     SCHEDULER_AGENT, get_scheduler_agent_instructions,
     REPORTING_AGENT, get_reporting_agent_instructions,
-    ASSISTANT_AGENT, get_assistant_agent_instructions
+    ASSISTANT_AGENT, get_assistant_agent_instructions,
+    POLITICAL_RISK_AGENT, get_political_risk_agent_instructions,
+    TARIFF_RISK_AGENT, get_tariff_risk_agent_instructions,
+    LOGISTICS_RISK_AGENT, get_logistics_risk_agent_instructions
 )
 from agents.agent_strategies import (
-    ChatbotSelectionStrategy, ChatbotTerminationStrategy
+    ChatbotSelectionStrategy, ChatbotTerminationStrategy,
+    ParallelRiskAnalysisStrategy, RateLimitedExecutor
 )
 from agents.agent_manager import create_or_reuse_agent
 from plugins.schedule_plugin import EquipmentSchedulePlugin
 from plugins.risk_plugin import RiskCalculationPlugin
 from plugins.logging_plugin import LoggingPlugin
+from plugins.report_file_plugin import ReportFilePlugin  # Add this import
+
+# Load environment variables from .env file
+load_dotenv()
 
 class ChatbotManager:
     """Manages the interactive chatbot for user queries."""
@@ -34,9 +44,17 @@ class ChatbotManager:
         self.schedule_plugin = EquipmentSchedulePlugin(connection_string)
         self.risk_plugin = RiskCalculationPlugin()
         self.logging_plugin = LoggingPlugin(connection_string)
+        self.report_file_plugin = ReportFilePlugin(connection_string)  # Add report file plugin
         self.chat_sessions = {}
         # Use a single lock for all session management operations
         self._session_lock = asyncio.Lock()
+        # Add rate limiter for parallel execution
+        self.rate_limiter = RateLimitedExecutor(max_concurrent=2, requests_per_minute=20)
+        
+        # Get Bing API key from environment
+        self.bing_api_key = os.getenv("BING_SEARCH_API_KEY")
+        if not self.bing_api_key:
+            print("WARNING: BING_SEARCH_API_KEY not found in environment variables")
     
     def __del__(self):
         """Destructor to ensure resources are cleaned up."""
@@ -61,7 +79,7 @@ class ChatbotManager:
             await self.close_session(session_id)
     
     async def initialize_session(self, session_id):
-        """Initializes a new chat session with all three agents using a lock to prevent race conditions."""
+        """Initializes a new chat session with all agents using a lock to prevent race conditions."""
         
         # Use a single lock for all session operations to ensure serial access
         async with self._session_lock:
@@ -113,10 +131,28 @@ class ChatbotManager:
             scheduler_logging = LoggingPlugin(self.connection_string)
             reporting_logging = LoggingPlugin(self.connection_string)
             assistant_logging = LoggingPlugin(self.connection_string)
+            political_logging = LoggingPlugin(self.connection_string)
+            tariff_logging = LoggingPlugin(self.connection_string)
+            logistics_logging = LoggingPlugin(self.connection_string)
             
-            # Create or reuse all three agents
+            # Create or reuse all agents
+            agents = {}
+            
+            # Create Bing connection configuration
+            bing_connection = None
+            if self.bing_api_key:
+                bing_connection = {
+                    "bing": {
+                        "api_key": self.bing_api_key,
+                        "endpoint": "https://api.bing.microsoft.com/v7.0/search"
+                    }
+                }
+            else:
+                print("WARNING: Bing search will not be available for risk agents due to missing API key")
+            
+            # Create scheduler agent
             print(f"Creating/retrieving scheduler agent for session {session_id}...")
-            scheduler_agent = await create_or_reuse_agent(
+            agents[SCHEDULER_AGENT] = await create_or_reuse_agent(
                 client=client,
                 agent_name=SCHEDULER_AGENT,
                 model_deployment_name=ai_agent_settings.model_deployment_name,
@@ -124,17 +160,52 @@ class ChatbotManager:
                 plugins=[self.schedule_plugin, self.risk_plugin, scheduler_logging]
             )
 
+            # Create political risk agent with Bing search
+            print(f"Creating/retrieving political risk agent for session {session_id}...")
+            agents[POLITICAL_RISK_AGENT] = await create_or_reuse_agent(
+                client=client,
+                agent_name=POLITICAL_RISK_AGENT,
+                model_deployment_name=ai_agent_settings.model_deployment_name,
+                instructions=get_political_risk_agent_instructions(),
+                plugins=[political_logging],
+                connections=bing_connection
+            )
+
+            # Create tariff risk agent with Bing search
+            print(f"Creating/retrieving tariff risk agent for session {session_id}...")
+            agents[TARIFF_RISK_AGENT] = await create_or_reuse_agent(
+                client=client,
+                agent_name=TARIFF_RISK_AGENT,
+                model_deployment_name=ai_agent_settings.model_deployment_name,
+                instructions=get_tariff_risk_agent_instructions(),
+                plugins=[tariff_logging],
+                connections=bing_connection
+            )
+
+            # Create logistics risk agent with Bing search
+            print(f"Creating/retrieving logistics risk agent for session {session_id}...")
+            agents[LOGISTICS_RISK_AGENT] = await create_or_reuse_agent(
+                client=client,
+                agent_name=LOGISTICS_RISK_AGENT,
+                model_deployment_name=ai_agent_settings.model_deployment_name,
+                instructions=get_logistics_risk_agent_instructions(),
+                plugins=[logistics_logging],
+                connections=bing_connection
+            )
+
+            # Create reporting agent with report file plugin
             print(f"Creating/retrieving reporting agent for session {session_id}...")
-            reporting_agent = await create_or_reuse_agent(
+            agents[REPORTING_AGENT] = await create_or_reuse_agent(
                 client=client,
                 agent_name=REPORTING_AGENT,
                 model_deployment_name=ai_agent_settings.model_deployment_name,
                 instructions=get_reporting_agent_instructions(),
-                plugins=[self.schedule_plugin, reporting_logging]
+                plugins=[self.schedule_plugin, reporting_logging, self.report_file_plugin]  # Add report file plugin here
             )
 
+            # Create assistant agent
             print(f"Creating/retrieving assistant agent for session {session_id}...")
-            assistant_agent = await create_or_reuse_agent(
+            agents[ASSISTANT_AGENT] = await create_or_reuse_agent(
                 client=client,
                 agent_name=ASSISTANT_AGENT,
                 model_deployment_name=ai_agent_settings.model_deployment_name,
@@ -143,72 +214,88 @@ class ChatbotManager:
             )
             
             # Get agent IDs
-            scheduler_agent_id = None
-            reporting_agent_id = None
-            assistant_agent_id = None
-            
-            # Extract IDs if available
-            if hasattr(scheduler_agent, 'definition') and hasattr(scheduler_agent.definition, 'id'):
-                scheduler_agent_id = scheduler_agent.definition.id
-            if hasattr(reporting_agent, 'definition') and hasattr(reporting_agent.definition, 'id'):
-                reporting_agent_id = reporting_agent.definition.id
-            if hasattr(assistant_agent, 'definition') and hasattr(assistant_agent.definition, 'id'):
-                assistant_agent_id = assistant_agent.definition.id
+            agent_ids = {}
+            for agent_name, agent in agents.items():
+                if hasattr(agent, 'definition') and hasattr(agent.definition, 'id'):
+                    agent_ids[agent_name] = agent.definition.id
+                else:
+                    agent_ids[agent_name] = None
             
             # Set agent IDs in their respective logging plugins
-            if scheduler_agent_id:
-                scheduler_logging.set_agent_id(scheduler_agent_id)
-            if reporting_agent_id:
-                reporting_logging.set_agent_id(reporting_agent_id)
-            if assistant_agent_id:
-                assistant_logging.set_agent_id(assistant_agent_id)
+            if agent_ids.get(SCHEDULER_AGENT):
+                scheduler_logging.set_agent_id(agent_ids[SCHEDULER_AGENT])
+            if agent_ids.get(POLITICAL_RISK_AGENT):
+                political_logging.set_agent_id(agent_ids[POLITICAL_RISK_AGENT])
+            if agent_ids.get(TARIFF_RISK_AGENT):
+                tariff_logging.set_agent_id(agent_ids[TARIFF_RISK_AGENT])
+            if agent_ids.get(LOGISTICS_RISK_AGENT):
+                logistics_logging.set_agent_id(agent_ids[LOGISTICS_RISK_AGENT])
+            if agent_ids.get(REPORTING_AGENT):
+                reporting_logging.set_agent_id(agent_ids[REPORTING_AGENT])
+            if agent_ids.get(ASSISTANT_AGENT):
+                assistant_logging.set_agent_id(agent_ids[ASSISTANT_AGENT])
             
             # Now recreate agents with instructions that include their IDs (if the function exists)
-            if scheduler_agent_id and hasattr(get_scheduler_agent_instructions, '__call__'):
-                # Check if the function accepts parameters
-                import inspect
-                if len(inspect.signature(get_scheduler_agent_instructions).parameters) > 0:
-                    scheduler_agent = await create_or_reuse_agent(
-                        client=client,
-                        agent_name=SCHEDULER_AGENT,
-                        model_deployment_name=ai_agent_settings.model_deployment_name,
-                        instructions=get_scheduler_agent_instructions(scheduler_agent_id),
-                        plugins=[self.schedule_plugin, self.risk_plugin, scheduler_logging]
-                    )
+            import inspect
             
-            if reporting_agent_id and hasattr(get_reporting_agent_instructions, '__call__'):
-                import inspect
-                if len(inspect.signature(get_reporting_agent_instructions).parameters) > 0:
-                    reporting_agent = await create_or_reuse_agent(
-                        client=client,
-                        agent_name=REPORTING_AGENT,
-                        model_deployment_name=ai_agent_settings.model_deployment_name,
-                        instructions=get_reporting_agent_instructions(reporting_agent_id),
-                        plugins=[self.schedule_plugin, reporting_logging]
-                    )
+            # Recreate each agent with ID-specific instructions if supported
+            for agent_name, agent_id in agent_ids.items():
+                if agent_id:
+                    instruction_func = globals().get(f"get_{agent_name.lower()}_instructions")
+                    if instruction_func and callable(instruction_func):
+                        if len(inspect.signature(instruction_func).parameters) > 0:
+                            # Get the corresponding logging plugin
+                            logging_plugin = {
+                                SCHEDULER_AGENT: scheduler_logging,
+                                POLITICAL_RISK_AGENT: political_logging,
+                                TARIFF_RISK_AGENT: tariff_logging,
+                                LOGISTICS_RISK_AGENT: logistics_logging,
+                                REPORTING_AGENT: reporting_logging,
+                                ASSISTANT_AGENT: assistant_logging
+                            }.get(agent_name)
+                            
+                            # Get the plugins for each agent (update to include report file plugin)
+                            agent_plugins = {
+                                SCHEDULER_AGENT: [self.schedule_plugin, self.risk_plugin, scheduler_logging],
+                                POLITICAL_RISK_AGENT: [political_logging],
+                                TARIFF_RISK_AGENT: [tariff_logging],
+                                LOGISTICS_RISK_AGENT: [logistics_logging],
+                                REPORTING_AGENT: [self.schedule_plugin, reporting_logging, self.report_file_plugin],  # Include report file plugin
+                                ASSISTANT_AGENT: [self.schedule_plugin, self.risk_plugin, assistant_logging]
+                            }.get(agent_name, [])
+                            
+                            # Get the connections for each agent
+                            agent_connections = None
+                            if agent_name in [POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT]:
+                                agent_connections = bing_connection
+                            
+                            agents[agent_name] = await create_or_reuse_agent(
+                                client=client,
+                                agent_name=agent_name,
+                                model_deployment_name=ai_agent_settings.model_deployment_name,
+                                instructions=instruction_func(agent_id),
+                                plugins=agent_plugins,
+                                connections=agent_connections
+                            )
             
-            if assistant_agent_id and hasattr(get_assistant_agent_instructions, '__call__'):
-                import inspect
-                if len(inspect.signature(get_assistant_agent_instructions).parameters) > 0:
-                    assistant_agent = await create_or_reuse_agent(
-                        client=client,
-                        agent_name=ASSISTANT_AGENT,
-                        model_deployment_name=ai_agent_settings.model_deployment_name,
-                        instructions=get_assistant_agent_instructions(assistant_agent_id),
-                        plugins=[self.schedule_plugin, self.risk_plugin, assistant_logging]
-                    )
-            
-            print(f"Scheduler agent ready: {scheduler_agent.name} (ID: {scheduler_agent_id})")
-            print(f"Reporting agent ready: {reporting_agent.name} (ID: {reporting_agent_id})")
-            print(f"Assistant agent ready: {assistant_agent.name} (ID: {assistant_agent_id})")
+            # Print agent status
+            for agent_name, agent in agents.items():
+                print(f"{agent_name} agent ready: {agent.name} (ID: {agent_ids.get(agent_name, 'None')})")
             
             print(f"Creating agent group chat for session {session_id}...")
             
-            # Create the agent group chat with all three agents
+            # Create the agent group chat with all agents
             chat = AgentGroupChat(
-                agents=[assistant_agent, scheduler_agent, reporting_agent],
+                agents=list(agents.values()),
                 termination_strategy=ChatbotTerminationStrategy(),
                 selection_strategy=ChatbotSelectionStrategy()
+            )
+            
+            # Create a parallel risk analysis chat for comprehensive analysis
+            parallel_chat = AgentGroupChat(
+                agents=list(agents.values()),
+                termination_strategy=ChatbotTerminationStrategy(),
+                selection_strategy=ParallelRiskAnalysisStrategy()  # Now using the parallel strategy
             )
             
             print(f"Chat session created successfully: {session_id}")
@@ -217,13 +304,13 @@ class ChatbotManager:
             async with self._session_lock:
                 self.chat_sessions[session_id] = {
                     "chat": chat,
+                    "parallel_chat": parallel_chat,  # Add parallel chat for comprehensive analysis
                     "client": client,
                     "credential": creds,
                     "last_activity": datetime.now(),
                     "model_deployment_name": ai_agent_settings.model_deployment_name,
-                    "scheduler_agent_id": scheduler_agent_id,
-                    "reporting_agent_id": reporting_agent_id,
-                    "assistant_agent_id": assistant_agent_id,
+                    "agents": agents,
+                    "agent_ids": agent_ids,
                     "conversation_id": conversation_id,
                     "initializing": False  # Mark as fully initialized
                 }
@@ -239,6 +326,29 @@ class ChatbotManager:
                 if session_id in self.chat_sessions:
                     del self.chat_sessions[session_id]
             raise
+    
+    async def process_agent_with_rate_limit(self, chat, agent_name, message_content):
+        """Process an agent with rate limiting."""
+        async def execute():
+            # Add the message to chat
+            msg = ChatMessageContent(
+                role=AuthorRole.ASSISTANT,
+                name=agent_name,
+                content=message_content
+            )
+            await chat.add_chat_message(msg)
+            
+            # Get agent response
+            responses = []
+            async for response in chat.invoke():
+                if response and hasattr(response, 'name') and response.name == agent_name:
+                    responses.append(response)
+                    break
+            
+            return responses[0] if responses else None
+        
+        # Execute with rate limiting
+        return await self.rate_limiter.execute_with_limit(execute)
     
     async def process_message(self, session_id, message):
         """Processes a user message and returns the combined response from all agents."""
@@ -288,14 +398,16 @@ class ChatbotManager:
             except Exception as e:
                 print(f"Error logging agent event: {e}")
             
-            chat = session["chat"]
-            
             # Update last activity time
             async with self._session_lock:
                 session["last_activity"] = datetime.now()
             
             # Get model deployment name from session
             model_deployment_name = session.get("model_deployment_name", "unknown")
+            
+            # Determine if this is a comprehensive risk analysis request
+            is_comprehensive_risk = any(keyword in message.lower() 
+                                      for keyword in ["all risks", "comprehensive", "full risk", "complete risk", "risk analysis"])
             
             # Check if the message is schedule-related
             is_schedule_related = any(keyword in message.lower() for keyword in 
@@ -313,6 +425,14 @@ class ChatbotManager:
                 """
             )
             
+            # Choose the appropriate chat based on the query type
+            if is_comprehensive_risk:
+                chat = session["parallel_chat"]  # Use parallel chat for comprehensive analysis
+                print(f"Using parallel chat for comprehensive risk analysis in session {session_id}")
+            else:
+                chat = session["chat"]  # Use regular chat for other queries
+                print(f"Using regular chat for session {session_id}")
+            
             print(f"Adding message to chat for session {session_id}")
             await chat.add_chat_message(user_message)
             
@@ -323,45 +443,81 @@ class ChatbotManager:
             max_scheduler_attempts = 2
             
             try:
-                async for response in chat.invoke():
-                    print(f"Response received for session {session_id}: {response}")
-                    if response is None:
-                        print("Response is None, skipping")
-                        continue
-                    if not hasattr(response, 'name') or not response.name:
-                        print(f"Response has no name attribute or name is empty, skipping: {response}")
-                        continue
+                if is_comprehensive_risk:
+                    # For comprehensive risk analysis, we use parallel execution
+                    risk_agents = [POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT]
                     
-                    # Store only the latest response from each agent
-                    agent_name = response.name
-                    print(f"Adding/updating response content from {agent_name}: {response.content[:50]}...")
-                    latest_responses[agent_name] = response
+                    # First, get scheduler response
+                    async for response in chat.invoke():
+                        if response and hasattr(response, 'name'):
+                            agent_name = response.name
+                            if agent_name == SCHEDULER_AGENT:
+                                latest_responses[agent_name] = response
+                                break
                     
-                    # For debugging, print current response state
-                    print(f"Current agents with responses: {list(latest_responses.keys())}")
-                    
-                    # Count scheduler attempts to avoid infinite loops in case of rate limits
-                    if agent_name == SCHEDULER_AGENT:
-                        scheduler_attempts += 1
-                    
-                    # Check if we have completed a full conversation cycle
-                    if (ASSISTANT_AGENT in latest_responses and 
-                        ((SCHEDULER_AGENT in latest_responses and REPORTING_AGENT in latest_responses) or
-                        (not is_schedule_related))):
-                        print("Complete conversation cycle detected, breaking out of loop")
-                        break
-                    
-                    # If scheduler has attempted multiple times without reporting agent response, break
-                    if is_schedule_related and scheduler_attempts >= max_scheduler_attempts and REPORTING_AGENT not in latest_responses:
-                        print(f"Scheduler has attempted {scheduler_attempts} times without reporting agent response, breaking")
-                        break
+                    # If we have scheduler response, process risk agents in parallel
+                    if SCHEDULER_AGENT in latest_responses:
+                        # Create tasks for parallel execution of risk agents
+                        risk_tasks = []
+                        for risk_agent in risk_agents:
+                            # Create a task for each risk agent using rate limiter
+                            task = self.process_agent_with_rate_limit(
+                                chat=chat,
+                                agent_name=risk_agent,
+                                message_content=latest_responses[SCHEDULER_AGENT].content
+                            )
+                            risk_tasks.append(task)
+                        
+                        # Execute all risk agents in parallel with rate limiting
+                        risk_results = await asyncio.gather(*risk_tasks, return_exceptions=True)
+                        
+                        # Process results
+                        for i, result in enumerate(risk_results):
+                            if isinstance(result, Exception):
+                                print(f"Error executing {risk_agents[i]}: {result}")
+                            elif result:
+                                latest_responses[risk_agents[i]] = result
+                        
+                        # Now get reporting agent response
+                        async for response in chat.invoke():
+                            if response and hasattr(response, 'name'):
+                                agent_name = response.name
+                                if agent_name == REPORTING_AGENT:
+                                    latest_responses[agent_name] = response
+                                    break
+                else:
+                    # For non-comprehensive queries, use the normal flow
+                    async for response in chat.invoke():
+                        if response is None:
+                            continue
+                        if not hasattr(response, 'name') or not response.name:
+                            continue
+                        
+                        agent_name = response.name
+                        latest_responses[agent_name] = response
+                        
+                        # Count scheduler attempts to avoid infinite loops
+                        if agent_name == SCHEDULER_AGENT:
+                            scheduler_attempts += 1
+                        
+                        # Check termination conditions based on query type
+                        if (ASSISTANT_AGENT in latest_responses and not is_schedule_related):
+                            break
+                        
+                        if (is_schedule_related and REPORTING_AGENT in latest_responses):
+                            break
+                        
+                        # Handle specific risk agent responses
+                        if agent_name in [POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT]:
+                            # For specific risk queries, might terminate after risk agent responds
+                            if not is_comprehensive_risk:
+                                break
                     
             except Exception as e:
                 print(f"Error during chat.invoke(): {e}")
                 import traceback
                 traceback.print_exc()
                 
-                # Instead of failing, return a graceful error message
                 return {
                     "status": "error",
                     "error": f"The agent encountered an error: {str(e)}. Please try again.",
@@ -419,31 +575,31 @@ class ChatbotManager:
                             
                             # Create a formatted report
                             report = """REPORTING_AGENT > 
-# Equipment Schedule Risk Report
+                                # Equipment Schedule Risk Report
 
-"""
+                                """
                             
                             # Add executive summary
                             if report_sections["executive_summary"].strip():
                                 report += f"""## Executive Summary
-{report_sections["executive_summary"]}
+                                    {report_sections["executive_summary"]}
 
-"""
+                                    """
                             
                             # Add risk items
                             for risk_level in ["high_risk", "medium_risk", "low_risk"]:
                                 if report_sections[risk_level].strip():
                                     level_name = risk_level.replace("_", " ").title()
                                     report += f"""## {level_name} Items
-{report_sections[risk_level]}
+                                    {report_sections[risk_level]}
 
-"""
+                                    """
                             
                             # Add recommendations based on findings
                             report += """## Recommendations
 
-Based on the analysis:
-"""
+                                Based on the analysis:
+                                """
                             
                             if "High Risk" in scheduler_content:
                                 report += "- **For high-risk items**: Immediate escalation to management and suppliers required\n"
@@ -453,17 +609,17 @@ Based on the analysis:
                                 report += "- **For low-risk items**: Continue regular monitoring according to standard procedures\n"
                             
                             report += """
-## Next Steps
+                                ## Next Steps
 
-1. Review all identified risks with project stakeholders
-2. Implement recommended mitigation actions
-3. Update tracking mechanisms to monitor progress
-4. Schedule follow-up reviews for high and medium risk items
+                                1. Review all identified risks with project stakeholders
+                                2. Implement recommended mitigation actions
+                                3. Update tracking mechanisms to monitor progress
+                                4. Schedule follow-up reviews for high and medium risk items
 
-## Conclusion
+                                ## Conclusion
 
-This report provides a comprehensive view of the current equipment schedule status and associated risks. Immediate attention is recommended for all high-risk items to prevent potential project delays.
-"""
+                                This report provides a comprehensive view of the current equipment schedule status and associated risks. Immediate attention is recommended for all high-risk items to prevent potential project delays.
+                                """
                             
                             # Create a mock response for the reporting agent
                             if REPORTING_AGENT not in latest_responses:
@@ -492,60 +648,49 @@ This report provides a comprehensive view of the current equipment schedule stat
                                 print(f"Error logging report generation assistance: {e}")
                         
                         else:
-                            # Try to get data from the database as fallback
-                            print("Scheduler output doesn't contain analysis, trying database fallback...")
+                            # Since we don't have database fallback anymore, generate a basic report
+                            print("Scheduler output doesn't contain analysis and no database fallback available")
                             
-                            # Get the conversation_id associated with this session
-                            extracted_conversation_id = None
-                            conv_id_match = re.search(r'conversation_id["\']?\s*[:=]\s*["\']([a-f0-9-]+)["\']', scheduler_content)
-                            if conv_id_match:
-                                extracted_conversation_id = conv_id_match.group(1)
-                                print(f"Extracted conversation_id from scheduler output: {extracted_conversation_id}")
-                            
-                            # If we couldn't extract it, use the current conversation_id
-                            if not extracted_conversation_id:
-                                extracted_conversation_id = conversation_id
-                            
-                            # Call get_risk_summary directly to retrieve the data that should have been passed
-                            risk_summary_json = self.schedule_plugin.get_risk_summary(conversation_id=extracted_conversation_id)
-                            
-                            # Now we can construct a replacement for the missing reporting agent response
-                            risk_summary = json.loads(risk_summary_json)
-                            
-                            # Only proceed if we actually have data
-                            if "all_variances" in risk_summary and risk_summary["all_variances"]:
-                                # Create a basic but useful report from the risk data
-                                summary_counts = {item["risk_flag"]: item["count"] for item in risk_summary.get("summary", [])}
-                                
-                                high_count = summary_counts.get("High Risk", 0)
-                                medium_count = summary_counts.get("Medium Risk", 0)
-                                low_count = summary_counts.get("Low Risk", 0)
-                                
-                                # [Rest of the database fallback logic...]
-                                # ... [previous database fallback code remains the same]
-                                
+                            # Generate a simplified report based on scheduler content
+                            if scheduler_content:
+                                report = f"""REPORTING_AGENT > 
+                                            # Schedule Analysis Summary
+
+                                            The scheduler has analyzed the equipment schedule data. However, due to communication limitations, a detailed report could not be generated at this time.
+
+                                            ## Scheduler Analysis Output
+
+                                            {scheduler_content}
+
+                                            ## Next Steps
+
+                                            Please try again or contact the project management team for support with the schedule analysis.
+                                        """
                             else:
-                                print("Could not generate replacement report - no variance data found")
-                                # If we can't generate a report, use a simplified version of the scheduler output
-                                if scheduler_content:
-                                    report = f"""REPORTING_AGENT > 
-# Schedule Analysis Summary
+                                report = """REPORTING_AGENT > 
+                                    # Schedule Analysis Summary
 
-The scheduler has analyzed the equipment schedule data. However, due to technical limitations, a detailed report could not be generated at this time.
+                                    The scheduler encountered issues while analyzing the equipment schedule data. No detailed report could be generated.
 
-## Scheduler Analysis Output
+                                    ## Recommendations
 
-{scheduler_content}
+                                    1. Please try your request again
+                                    2. If the issue persists, contact technical support
+                                    3. Consider breaking down your request into smaller, more specific queries
 
-## Next Steps
+                                    ## Next Steps
 
-Please contact the project management team for a detailed analysis of the schedule data.
-"""
-                                    latest_responses[REPORTING_AGENT] = ChatMessageContent(
-                                        role=AuthorRole.ASSISTANT,
-                                        name=REPORTING_AGENT,
-                                        content=report
-                                    )
+                                    Please ensure your request is clear and specific. Try asking about:
+                                    - Specific equipment items
+                                    - Specific risk categories
+                                    - Specific time periods
+                                    """
+                            
+                            latest_responses[REPORTING_AGENT] = ChatMessageContent(
+                                role=AuthorRole.ASSISTANT,
+                                name=REPORTING_AGENT,
+                                content=report
+                            )
                     
                     except Exception as e:
                         print(f"Error trying to bridge gap between scheduler and reporting agents: {e}")
@@ -555,8 +700,11 @@ Please contact the project management team for a detailed analysis of the schedu
             # More robust response formatting
             final_response = ""
             
-            # For schedule-related queries, process both scheduler and reporting agent responses
-            if is_schedule_related:
+            # For comprehensive risk analysis
+            if is_comprehensive_risk and REPORTING_AGENT in latest_responses:
+                final_response = latest_responses[REPORTING_AGENT].content.replace("REPORTING_AGENT > ", "")
+            # For schedule-related queries
+            elif is_schedule_related:
                 # Check if we have both scheduler and reporting responses
                 if SCHEDULER_AGENT in latest_responses and REPORTING_AGENT in latest_responses:
                     # Use the reporting agent's response as the primary content since it's meant for human consumption
@@ -580,10 +728,11 @@ Please contact the project management team for a detailed analysis of the schedu
                     report_response = latest_responses[REPORTING_AGENT].content.replace("REPORTING_AGENT > ", "")
                     final_response = report_response
             
-            # For non-schedule queries, just use the assistant's response
-            elif ASSISTANT_AGENT in latest_responses:
-                content = latest_responses[ASSISTANT_AGENT].content.replace("ASSISTANT > ", "")
-                final_response = content
+            # For specific risk queries or general queries
+            elif latest_responses:
+                # Get the last agent's response
+                last_agent = list(latest_responses.keys())[-1]
+                final_response = latest_responses[last_agent].content.replace(f"{last_agent} > ", "")
             
             # If no responses were collected, provide a fallback
             if not final_response:
@@ -634,6 +783,7 @@ Please contact the project management team for a detailed analysis of the schedu
                 "conversation_id": conversation_id if 'conversation_id' in locals() else None
             }
 
+    # [Keep all existing cleanup_sessions and close_session methods unchanged]
     async def cleanup_sessions(self, max_age_minutes=30):
         """Cleans up inactive chat sessions."""
         now = datetime.now()

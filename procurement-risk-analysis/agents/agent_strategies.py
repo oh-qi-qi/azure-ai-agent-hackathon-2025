@@ -2,8 +2,13 @@
 
 from semantic_kernel.agents.strategies import TerminationStrategy, SequentialSelectionStrategy
 from semantic_kernel.contents.utils.author_role import AuthorRole
+import asyncio
+import time
 
-from .agent_definitions import SCHEDULER_AGENT, REPORTING_AGENT, ASSISTANT_AGENT
+from .agent_definitions import (
+    SCHEDULER_AGENT, REPORTING_AGENT, ASSISTANT_AGENT,
+    POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT
+)
 
 # Selection Strategy for automated workflow
 class AutomatedWorkflowSelectionStrategy(SequentialSelectionStrategy):
@@ -25,7 +30,6 @@ class AutomatedWorkflowSelectionStrategy(SequentialSelectionStrategy):
         agent_name = SCHEDULER_AGENT
         return next((agent for agent in agents if agent.name == agent_name), None)
 
-
 # Termination Strategy for automated workflow
 class AutomatedWorkflowTerminationStrategy(TerminationStrategy):
     """A strategy for determining when to end the automated workflow."""
@@ -37,9 +41,9 @@ class AutomatedWorkflowTerminationStrategy(TerminationStrategy):
             return True
         return False
 
-# Selection Strategy for interactive chatbot
+# Selection Strategy for interactive chatbot - ENHANCED VERSION
 class ChatbotSelectionStrategy(SequentialSelectionStrategy):
-    """A strategy for determining which agent should take the next turn in the chatbot."""
+    """Enhanced strategy for chatbot interaction with new risk agents."""
     
     async def select_agent(self, agents, history):
         """Check which agent should take the next turn in the chat."""
@@ -47,83 +51,272 @@ class ChatbotSelectionStrategy(SequentialSelectionStrategy):
         if history[-1].role == AuthorRole.USER:
             user_message = history[-1].content.lower()
             
-            # Check for schedule analysis or risk related queries
-            if any(keyword in user_message for keyword in ["schedule", "risk", "delay", "variance", "late", "delivery", "milestone"]):
-                # For schedule/risk questions, start with the scheduler agent
+            # Case 1: Schedule-only risk questions
+            if any(keyword in user_message for keyword in ["schedule risk", "delay risk", "variance risk"]) and \
+               not any(keyword in user_message for keyword in ["political", "tariff", "logistics", "all risks", "comprehensive"]):
                 agent_name = SCHEDULER_AGENT
-                scheduler_agent = next((agent for agent in agents if agent.name == agent_name), None)
-                if scheduler_agent:
-                    print("Selecting SCHEDULER_AGENT after user message")
-                    return scheduler_agent
+                return next((agent for agent in agents if agent.name == agent_name), None)
             
-            # For non-schedule questions, use the assistant agent
+            # Case 2: Specific risk type questions
+            if "political risk" in user_message or "political risks" in user_message:
+                # Need scheduler first, then political
+                agent_name = SCHEDULER_AGENT
+                return next((agent for agent in agents if agent.name == agent_name), None)
+            
+            if any(keyword in user_message for keyword in ["tariff risk", "tariff risks", "trade risk", "custom risk", "customs risk"]):
+                # Need scheduler first, then tariff
+                agent_name = SCHEDULER_AGENT
+                return next((agent for agent in agents if agent.name == agent_name), None)
+            
+            if any(keyword in user_message for keyword in ["logistics risk", "logistics risks", "shipping risk", "port risk", "transport risk"]):
+                # Need scheduler first, then logistics
+                agent_name = SCHEDULER_AGENT
+                return next((agent for agent in agents if agent.name == agent_name), None)
+            
+            # Case 3: Comprehensive risk analysis
+            if any(keyword in user_message for keyword in ["all risks", "comprehensive", "full analysis", "complete risk", "risk analysis", "what are the risks"]):
+                # Start with scheduler for full risk analysis
+                agent_name = SCHEDULER_AGENT
+                return next((agent for agent in agents if agent.name == agent_name), None)
+            
+            # Case 4: Report generation from conversation ID
+            if "generate report" in user_message and "conversation id" in user_message:
+                # Go directly to reporting agent
+                agent_name = REPORTING_AGENT
+                return next((agent for agent in agents if agent.name == agent_name), None)
+            
+            # Case 5: General queries about risks or schedules (not specific)
+            if any(keyword in user_message for keyword in ["risk", "risks", "schedule", "delay", "variance", "equipment"]) and \
+               not any(keyword in user_message for keyword in ["hello", "hi", "help", "what can you do"]):
+                # Start with scheduler for general risk/schedule queries
+                agent_name = SCHEDULER_AGENT
+                return next((agent for agent in agents if agent.name == agent_name), None)
+            
+            # Default case: For general questions, help requests, or chat, use assistant agent
             assistant_agent = next((agent for agent in agents if agent.name == ASSISTANT_AGENT), None)
             if assistant_agent:
-                print("Selecting ASSISTANT_AGENT after user message (non-schedule topic)")
+                print("Selecting ASSISTANT_AGENT after user message (general query)")
                 return assistant_agent
         
-        # If the last message is from the scheduler agent, the reporting agent goes next
-        elif hasattr(history[-1], 'name') and history[-1].name == SCHEDULER_AGENT:
-            reporting_agent = next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
-            if reporting_agent:
-                print("Selecting REPORTING_AGENT after SCHEDULER_AGENT message")
-                return reporting_agent
+        # Handle agent sequence flow
+        last_agent = history[-1].name if hasattr(history[-1], 'name') else None
         
-        # We don't need to select ASSISTANT_AGENT after REPORTING_AGENT anymore
-        # as we'll terminate after REPORTING_AGENT for schedule-related queries
+        # After scheduler, determine next agent based on original query
+        if last_agent == SCHEDULER_AGENT:
+            original_query = next((msg.content for msg in history if msg.role == AuthorRole.USER), "").lower()
+            
+            # If only schedule risk, terminate here
+            if "schedule risk" in original_query and not any(keyword in original_query for keyword in ["political", "tariff", "logistics", "all risks"]):
+                return None
+            
+            # If specific risk type requested
+            if ("political risk" in original_query or "political risks" in original_query) and POLITICAL_RISK_AGENT not in [msg.name for msg in history if hasattr(msg, 'name')]:
+                return next((agent for agent in agents if agent.name == POLITICAL_RISK_AGENT), None)
+            
+            if any(keyword in original_query for keyword in ["tariff risk", "tariff risks", "trade risk"]) and TARIFF_RISK_AGENT not in [msg.name for msg in history if hasattr(msg, 'name')]:
+                return next((agent for agent in agents if agent.name == TARIFF_RISK_AGENT), None)
+            
+            if any(keyword in original_query for keyword in ["logistics risk", "logistics risks", "shipping risk"]) and LOGISTICS_RISK_AGENT not in [msg.name for msg in history if hasattr(msg, 'name')]:
+                return next((agent for agent in agents if agent.name == LOGISTICS_RISK_AGENT), None)
+            
+            # If comprehensive analysis, trigger all risk agents
+            if any(keyword in original_query for keyword in ["all risks", "comprehensive", "what are the risks"]):
+                responded_agents = set(msg.name for msg in history if hasattr(msg, 'name'))
+                risk_agent_order = [POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT]
+                
+                for agent_name in risk_agent_order:
+                    if agent_name not in responded_agents:
+                        return next((agent for agent in agents if agent.name == agent_name), None)
+                
+                # If all risk agents have responded, go to reporting
+                if all(agent_name in responded_agents for agent_name in risk_agent_order):
+                    return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
         
-        # Default to assistant agent if none of the above conditions are met
-        assistant_agent = next((agent for agent in agents if agent.name == ASSISTANT_AGENT), None)
-        if assistant_agent:
-            print("Selecting ASSISTANT_AGENT as default")
-            return assistant_agent
+        # After a specific risk agent, determine next step
+        if last_agent in [POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT]:
+            original_query = next((msg.content for msg in history if msg.role == AuthorRole.USER), "").lower()
+            
+            # If comprehensive analysis, continue to next agent
+            if any(keyword in original_query for keyword in ["all risks", "comprehensive", "what are the risks"]):
+                responded_agents = set(msg.name for msg in history if hasattr(msg, 'name'))
+                risk_agent_order = [POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT]
+                
+                for agent_name in risk_agent_order:
+                    if agent_name not in responded_agents:
+                        return next((agent for agent in agents if agent.name == agent_name), None)
+                
+                # If all risk agents have responded, go to reporting
+                if all(agent_name in responded_agents for agent_name in risk_agent_order):
+                    return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
+            else:
+                # For specific risk queries, terminate after specific agent
+                return None
+        
+        # After reporting agent, terminate
+        if last_agent == REPORTING_AGENT:
+            return None
+        
+        # After assistant agent, terminate
+        if last_agent == ASSISTANT_AGENT:
+            return None
+        
+        # Default to assistant agent
+        return next((agent for agent in agents if agent.name == ASSISTANT_AGENT), None)
 
-# Termination Strategy for interactive chatbot
+# Termination Strategy for interactive chatbot - ENHANCED VERSION
 class ChatbotTerminationStrategy(TerminationStrategy):
-    """A strategy for determining when to end the chatbot interaction with better handling of rate limit scenarios."""
+    """Enhanced termination strategy for different query types."""
     
     async def should_terminate(self, selected_agent, history):
         """Check if the chat should terminate."""
         # If we have fewer than 2 messages, don't terminate
         if len(history) < 2:
             return False
-            
-        # For schedule-related questions, we want to terminate after REPORTING_AGENT responds
-        # or after SCHEDULER_AGENT if REPORTING_AGENT couldn't respond due to rate limits
         
-        # Check if the current query is schedule-related
-        is_schedule_query = False
-        for i, msg in enumerate(history):
+        # Extract the original user query
+        original_query = ""
+        for msg in history:
             if msg.role == AuthorRole.USER:
-                user_message = msg.content.lower()
-                if any(keyword in user_message for keyword in ["schedule", "risk", "delay", "variance", "late", "delivery", "milestone"]):
-                    is_schedule_query = True
-                    break
+                original_query = msg.content.lower()
+                break
         
-        # For schedule-related queries
-        if is_schedule_query:
-            # If the last message is from REPORTING_AGENT, terminate 
-            if hasattr(history[-1], 'name') and history[-1].name == REPORTING_AGENT:
-                print("Terminating after REPORTING_AGENT for schedule-related query")
+        # Case 1: Schedule-only risk questions
+        if any(keyword in original_query for keyword in ["schedule risk", "delay risk", "variance risk"]) and \
+           not any(keyword in original_query for keyword in ["political", "tariff", "logistics", "all risks", "comprehensive"]):
+            # Terminate after scheduler agent responds
+            if any(msg.name == SCHEDULER_AGENT for msg in history):
+                print("Terminating after SCHEDULER_AGENT for schedule-only query")
                 return True
-                
-            # If the last message is from SCHEDULER_AGENT and it's been selected again
-            # (which happens during retries), this suggests a rate limit issue
-            if (hasattr(history[-1], 'name') and history[-1].name == SCHEDULER_AGENT and 
-                selected_agent.name == SCHEDULER_AGENT):
-                # Check if we've already had multiple turns from SCHEDULER_AGENT
-                scheduler_count = sum(1 for msg in history if hasattr(msg, 'name') and msg.name == SCHEDULER_AGENT)
-                if scheduler_count > 1:
-                    print("Terminating after multiple SCHEDULER_AGENT turns (possible rate limit issue)")
-                    return True
         
-        # For non-schedule questions, terminate after the assistant responds
-        if selected_agent.name == ASSISTANT_AGENT:
-            for i in range(len(history) - 1):
-                if (history[i].role == AuthorRole.USER and
-                    hasattr(history[i+1], 'name') and history[i+1].name == ASSISTANT_AGENT):
-                    print("Terminating after ASSISTANT_AGENT for non-schedule query")
-                    return True
+        # Case 2: Specific risk type questions
+        if ("political risk" in original_query or "political risks" in original_query) and \
+           not any(keyword in original_query for keyword in ["all risks", "comprehensive"]):
+            # Terminate after political risk agent responds
+            if any(msg.name == POLITICAL_RISK_AGENT for msg in history):
+                print("Terminating after POLITICAL_RISK_AGENT")
+                return True
+        
+        if any(keyword in original_query for keyword in ["tariff risk", "tariff risks", "trade risk"]) and \
+           not any(keyword in original_query for keyword in ["all risks", "comprehensive"]):
+            # Terminate after tariff risk agent responds
+            if any(msg.name == TARIFF_RISK_AGENT for msg in history):
+                print("Terminating after TARIFF_RISK_AGENT")
+                return True
+        
+        if any(keyword in original_query for keyword in ["logistics risk", "logistics risks", "shipping risk"]) and \
+           not any(keyword in original_query for keyword in ["all risks", "comprehensive"]):
+            # Terminate after logistics risk agent responds
+            if any(msg.name == LOGISTICS_RISK_AGENT for msg in history):
+                print("Terminating after LOGISTICS_RISK_AGENT")
+                return True
+        
+        # Case 3: Comprehensive risk analysis
+        if any(keyword in original_query for keyword in ["all risks", "comprehensive", "full analysis", "what are the risks"]):
+            # Terminate only after reporting agent responds
+            if any(msg.name == REPORTING_AGENT for msg in history):
+                print("Terminating after REPORTING_AGENT for comprehensive analysis")
+                return True
+        
+        # Case 4: Report generation from conversation ID
+        if "generate report" in original_query and "conversation id" in original_query:
+            # Terminate after reporting agent responds
+            if any(msg.name == REPORTING_AGENT for msg in history):
+                print("Terminating after REPORTING_AGENT for report generation")
+                return True
+        
+        # Case 5: For general chat or help questions
+        if any(keyword in original_query for keyword in ["hello", "hi", "help", "what can you do", "how are you"]):
+            # Terminate after assistant responds
+            if any(msg.name == ASSISTANT_AGENT for msg in history):
+                print("Terminating after ASSISTANT_AGENT for general query")
+                return True
+        
+        # Default case: Check for standard termination conditions
+        last_agent = history[-1].name if hasattr(history[-1], 'name') else None
+        if last_agent == ASSISTANT_AGENT:
+            return True
         
         # Don't terminate yet - continue the conversation
         return False
+
+# NEW: Strategy for managing parallel execution of risk analysis agents
+class ParallelRiskAnalysisStrategy(SequentialSelectionStrategy):
+    """A strategy for managing parallel execution of risk analysis agents."""
+    
+    def __init__(self):
+        super().__init__()
+        self.agents_completed = set()
+        self.risk_agents = {POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT}
+        self.agent_queue = []
+        self.last_execution_time = {}
+        self.min_interval = 1.0  # Minimum 1 second between agent executions
+        
+    async def select_agent(self, agents, history):
+        """Select the next agent with rate limit handling."""
+        # First execution - start with scheduler
+        if not history:
+            return next((agent for agent in agents if agent.name == SCHEDULER_AGENT), None)
+        
+        # Check if scheduler has completed
+        scheduler_completed = any(msg.name == SCHEDULER_AGENT and len(msg.content) > 100 
+                                for msg in history)
+        
+        # If scheduler completed but risk agents haven't run yet
+        if scheduler_completed and not self.agents_completed:
+            # Initialize queue for risk agents if empty
+            if not self.agent_queue:
+                self.agent_queue = list(self.risk_agents)
+            
+            # Rate limiting logic
+            current_time = time.time()
+            
+            # Check if we can execute the next agent
+            for agent_name in self.agent_queue:
+                last_exec = self.last_execution_time.get(agent_name, 0)
+                if current_time - last_exec >= self.min_interval:
+                    # Update execution time
+                    self.last_execution_time[agent_name] = current_time
+                    
+                    # Find and return the agent
+                    agent = next((a for a in agents if a.name == agent_name), None)
+                    if agent:
+                        self.agent_queue.remove(agent_name)
+                        self.agents_completed.add(agent_name)
+                        return agent
+            
+            # If no agent can execute due to rate limits, wait
+            await asyncio.sleep(self.min_interval)
+            return self.select_agent(agents, history)
+        
+        # If all risk agents have completed, select reporting agent
+        if self.agents_completed == self.risk_agents:
+            return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
+        
+        return None
+
+# NEW: Helper class to manage rate-limited execution
+class RateLimitedExecutor:
+    """Helper class to manage rate-limited execution of agents."""
+    
+    def __init__(self, max_concurrent=2, requests_per_minute=20):
+        self.max_concurrent = max_concurrent
+        self.requests_per_minute = requests_per_minute
+        self.semaphore = asyncio.Semaphore(max_concurrent)
+        self.request_times = []
+        
+    async def execute_with_limit(self, func, *args, **kwargs):
+        """Execute a function with rate limiting."""
+        async with self.semaphore:
+            # Clean up old request times
+            current_time = time.time()
+            self.request_times = [t for t in self.request_times if current_time - t < 60]
+            
+            # Check if we need to wait
+            if len(self.request_times) >= self.requests_per_minute:
+                wait_time = 60 - (current_time - self.request_times[0])
+                if wait_time > 0:
+                    await asyncio.sleep(wait_time)
+            
+            # Execute the function
+            self.request_times.append(time.time())
+            return await func(*args, **kwargs)
