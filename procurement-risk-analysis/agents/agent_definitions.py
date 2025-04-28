@@ -193,7 +193,7 @@ Format your response with clear sections:
 1. Executive Summary: Overview of political risks identified
 2. Final Assessment: A paragraph analyzing whether there are signs of emerging political unrest or policy uncertainty
 3. Political Risk Table: A markdown table with AT LEAST 5 identified risks:
-   | Summary (≤35 words) | Likelihood (0-5) | Reasoning for Likelihood | Political Details | Publish Date | Source Name | Source URL |
+   | Country | Summary (≤35 words) | Likelihood (0-5) | Reasoning for Likelihood | Political Details | Publish Date | Source Name | Source URL |
 4. Equipment Impact Analysis: Show impact on each equipment item
    | Equipment Code | Manufacturing Country | Project Country | Political Risk Level | Key Factors |
    Include all equipment items, sorted by risk level (High to Low)
@@ -279,7 +279,7 @@ Format your response with clear sections:
 1. Executive Summary: Overview of tariff/trade risks identified
 2. Final Assessment: A paragraph analyzing if there are emerging signs of tariff uncertainty or economic nationalism
 3. Tariff Risk Table: A markdown table with AT LEAST 5 identified risks:
-   | Summary (≤35 words) | Likelihood (0-5) | Reasoning for Likelihood | Tariff Details | Publish Date | Source Name | Source URL |
+   | Country | Summary (≤35 words) | Likelihood (0-5) | Reasoning for Likelihood | Tariff Details | Publish Date | Source Name | Source URL |
 4. Equipment Impact Analysis: Show impact on each equipment item
    | Equipment Code | Origin Country | Destination Country | Tariff Risk Level | Current Rates |
    Include all equipment items, sorted by risk level (High to Low)
@@ -366,7 +366,7 @@ Format your response with clear sections:
 1. Executive Summary: Overview of logistics risks identified
 2. Final Assessment: A paragraph analyzing if there are emerging signs of logistics disruptions
 3. Logistics Risk Table: A markdown table with AT LEAST 5 identified risks:
-   | Summary (≤35 words) | Likelihood (0-5) | Reasoning for Likelihood | Logistics Details | Publish Date | Source Name | Source URL |
+   | Country | Summary (≤35 words) | Likelihood (0-5) | Reasoning for Likelihood | Logistics Details | Publish Date | Source Name | Source URL |
 4. Equipment Impact Analysis: Show impact on each equipment item
    | Equipment Code | Shipping Port | Receiving Port | Logistics Risk Level | Key Issues |
    Include all equipment items, sorted by risk level (High to Low)

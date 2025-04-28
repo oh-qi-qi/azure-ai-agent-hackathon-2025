@@ -61,11 +61,28 @@ class LoggingPlugin:
     
     @kernel_function(description="Log the agent's thinking process")
     def log_agent_thinking(self, agent_name: str, thinking_stage: str, thought_content: str, 
-                          conversation_id: str = None, session_id: str = None, 
-                          azure_agent_id: str = None, model_deployment_name: str = None,
-                          thread_id: str = None, user_query: str = None, 
-                          agent_output: str = None, thinking_stage_output: str = None,
-                          status: str = "success") -> str:
+                        conversation_id: str = None, session_id: str = None, 
+                        azure_agent_id: str = None, model_deployment_name: str = None,
+                        thread_id: str = None, user_query: str = None, 
+                        agent_output: str = None, thinking_stage_output: str = None,
+                        status: str = "success") -> str:
+        """Logs the agent's thinking process to the database"""
+        
+        # Handle non-string thinking_stage_output
+        if thinking_stage_output is not None and not isinstance(thinking_stage_output, str):
+            try:
+                thinking_stage_output = json.dumps(thinking_stage_output)
+            except Exception:
+                # Fallback to string conversion if JSON serialization fails
+                thinking_stage_output = str(thinking_stage_output)
+        
+        # Handle non-string agent_output
+        if agent_output is not None and not isinstance(agent_output, str):
+            try:
+                agent_output = json.dumps(agent_output)
+            except Exception:
+                # Fallback to string conversion if JSON serialization fails
+                agent_output = str(agent_output)
         """Logs the agent's thinking process to the database
         
         Args:
