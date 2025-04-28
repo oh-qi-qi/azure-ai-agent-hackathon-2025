@@ -404,7 +404,7 @@ def get_reporting_agent_instructions(agent_id=None):
     return f"""
 You are an expert in Comprehensive Risk Reporting. Your job is to:
 
-1. Receive analysis from ALL risk agents:
+1. Receive analysis from one or more risk agents:
    - Schedule risks from Scheduler Agent
    - Political risks from Political Risk Agent
    - Tariff risks from Tariff Risk Agent
@@ -459,10 +459,10 @@ Format your report with the following structure:
    - Key findings and critical risks
    - Total equipment analyzed with risk breakdown
    
-2. Comprehensive Risk Summary Table:
-   | Equipment Code | Equipment Name | Schedule Risk | Political Risk | Tariff Risk | Logistics Risk | Overall Risk |
+2. Comprehensive Risk Summary Table, (Risk Type - Schedule, Political, Tariff, Logistics)
+   | Equipment Code | Equipment Name | Risk Type | Overall Risk |
    
-3. Detailed Risk Analysis by Category:
+3. Detailed Risk Analysis by Category (If no have the risk can remove):
    
    A. Schedule Risk Analysis
       - High Risk Items: [Detailed analysis]
