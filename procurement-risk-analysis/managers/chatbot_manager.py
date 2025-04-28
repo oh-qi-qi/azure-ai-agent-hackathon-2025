@@ -53,6 +53,8 @@ class ChatbotManager:
         self.rate_limiter = RateLimitedExecutor(max_concurrent=2, requests_per_minute=20)
         # Add processing lock for preventing race conditions
         self._processing_locks = {}
+        # Add task tracking dictionary
+        self._session_tasks = {}
         
         # Get Bing API key from environment
         self.bing_api_key = os.getenv("BING_SEARCH_API_KEY")
@@ -72,6 +74,12 @@ class ChatbotManager:
             # Run the cleanup in the event loop
             if self.chat_sessions:
                 loop.run_until_complete(self.cleanup_all_sessions())
+                
+            # Cancel any tracked tasks
+            for session_id, tasks in self._session_tasks.items():
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
         except Exception as e:
             print(f"Error in destructor: {e}")
     
@@ -84,24 +92,27 @@ class ChatbotManager:
     async def initialize_session(self, session_id):
         """Initializes a new chat session with all agents using a lock to prevent race conditions."""
         
-        # Use a single lock for all session operations to ensure serial access
+        # First check if session exists without locking for efficiency
+        if session_id in self.chat_sessions:
+            session = self.chat_sessions[session_id]
+            if not session.get("initializing", False) and "chat" in session:
+                print(f"Reusing existing chat session: {session_id}")
+                # Update last activity time
+                async with self._session_lock:
+                    session["last_activity"] = datetime.now()
+                return session
+        
+        # Now acquire the lock for initialization
         async with self._session_lock:
-            # Check if the session already exists
+            # Double-check after acquiring the lock
             if session_id in self.chat_sessions:
                 session = self.chat_sessions[session_id]
-                # If it's not initializing and has a chat object, return it
                 if not session.get("initializing", False) and "chat" in session:
-                    print(f"Reusing existing chat session: {session_id}")
+                    session["last_activity"] = datetime.now()
                     return session
                 elif session.get("initializing", False):
                     # If it's already initializing, wait a moment and let the other thread complete
                     print(f"Session {session_id} is already being initialized, waiting...")
-                    await asyncio.sleep(0.5)
-                    # Try to get the session again
-                    if session_id in self.chat_sessions:
-                        session = self.chat_sessions[session_id]
-                        if not session.get("initializing", False) and "chat" in session:
-                            return session
             
             # Now we can start initialization
             print(f"Creating new chat session: {session_id}")
@@ -113,7 +124,8 @@ class ChatbotManager:
             self.chat_sessions[session_id] = {
                 "initializing": True, 
                 "last_activity": datetime.now(),
-                "conversation_id": conversation_id
+                "conversation_id": conversation_id,
+                "cancellation_token": asyncio.Future()  # Add cancellation token
             }
         
         # After this point, we can release the lock as the session is marked as initializing
@@ -303,22 +315,57 @@ class ChatbotManager:
             
             print(f"Chat session created successfully: {session_id}")
             
+            # Initialize task tracking list
+            self._session_tasks[session_id] = []
+            
             # Update the chat session with the full data
             async with self._session_lock:
-                self.chat_sessions[session_id] = {
-                    "chat": chat,
-                    "parallel_chat": parallel_chat,
-                    "client": client,
-                    "credential": creds,
-                    "last_activity": datetime.now(),
-                    "model_deployment_name": ai_agent_settings.model_deployment_name,
-                    "agents": agents,
-                    "agent_ids": agent_ids,
-                    "conversation_id": conversation_id,
-                    "initializing": False  # Mark as fully initialized
-                }
-            
-            return self.chat_sessions[session_id]
+                # Check if session still exists (might have been cleaned up during initialization)
+                if session_id in self.chat_sessions:
+                    self.chat_sessions[session_id].update({
+                        "chat": chat,
+                        "parallel_chat": parallel_chat,
+                        "client": client,
+                        "credential": creds,
+                        "last_activity": datetime.now(),
+                        "model_deployment_name": ai_agent_settings.model_deployment_name,
+                        "agents": agents,
+                        "agent_ids": agent_ids,
+                        "conversation_id": conversation_id,
+                        "initializing": False  # Mark as fully initialized
+                    })
+                    # Return the fully initialized session
+                    return self.chat_sessions[session_id]
+                else:
+                    # Session was cleaned up during initialization
+                    # Clean up resources we created
+                    if hasattr(client, 'close') and callable(client.close):
+                        try:
+                            await client.close()
+                        except Exception as e:
+                            print(f"Error closing client during cleanup: {e}")
+                    
+                    if hasattr(creds, 'close') and callable(creds.close):
+                        try:
+                            await creds.close()
+                        except Exception as e:
+                            print(f"Error closing credentials during cleanup: {e}")
+                    
+                    # Recreate the session
+                    self.chat_sessions[session_id] = {
+                        "chat": chat,
+                        "parallel_chat": parallel_chat,
+                        "client": client,
+                        "credential": creds,
+                        "last_activity": datetime.now(),
+                        "model_deployment_name": ai_agent_settings.model_deployment_name,
+                        "agents": agents,
+                        "agent_ids": agent_ids,
+                        "conversation_id": conversation_id,
+                        "initializing": False,  # Mark as fully initialized
+                        "cancellation_token": asyncio.Future()  # Add cancellation token
+                    }
+                    return self.chat_sessions[session_id]
             
         except Exception as e:
             print(f"Error in initialize_session for {session_id}: {e}")
@@ -344,8 +391,8 @@ class ChatbotManager:
             # Get agent response with timeout
             responses = []
             try:
-                # Set a timeout for this specific agent
-                agent_timeout = 30  # seconds
+                # Set a timeout for this specific agent - increased for reliability
+                agent_timeout = 60  # seconds (increased from 30)
                 
                 # Create a task with timeout
                 async def get_response():
@@ -354,11 +401,23 @@ class ChatbotManager:
                             responses.append(response)
                             return
                 
-                # Wait for response with timeout
-                await asyncio.wait_for(get_response(), timeout=agent_timeout)
+                # Add retry mechanism
+                retry_count = 0
+                max_retries = 2
                 
-            except asyncio.TimeoutError:
-                print(f"Timeout waiting for {agent_name} response after {agent_timeout} seconds")
+                while retry_count <= max_retries:
+                    try:
+                        # Wait for response with timeout
+                        await asyncio.wait_for(get_response(), timeout=agent_timeout)
+                        break  # Success, exit the retry loop
+                    except asyncio.TimeoutError:
+                        retry_count += 1
+                        if retry_count <= max_retries:
+                            print(f"{agent_name} timeout, retry {retry_count}/{max_retries}")
+                            await asyncio.sleep(1)  # Brief pause before retry
+                        else:
+                            print(f"Timeout waiting for {agent_name} response after {agent_timeout} seconds and {max_retries} retries")
+                
             except Exception as e:
                 print(f"Error processing {agent_name}: {e}")
             
@@ -367,45 +426,113 @@ class ChatbotManager:
         # Execute with rate limiting
         return await self.rate_limiter.execute_with_limit(execute)
     
-    async def _process_with_timeout(self, chat, latest_responses, timeout_seconds):
+    async def _process_with_timeout(self, chat, latest_responses, timeout_seconds, cancellation_token=None):
         """Process chat invocation with timeout, adding responses to latest_responses dictionary."""
         start_time = time.time()
         scheduler_attempts = 0
         max_scheduler_attempts = 2
         
         try:
-            async for response in chat.invoke():
-                # Check for timeout
-                if time.time() - start_time > timeout_seconds:
-                    print(f"Process timeout after {timeout_seconds} seconds")
-                    break
+            # Track all running tasks to ensure proper cleanup
+            running_tasks = set()
+            
+            async def process_stream():
+                nonlocal scheduler_attempts
+                
+                try:
+                    async for response in chat.invoke():
+                        # Check for cancellation
+                        if cancellation_token and cancellation_token.done():
+                            print("Processing cancelled via token")
+                            return
+                            
+                        # Check for timeout
+                        if time.time() - start_time > timeout_seconds:
+                            print(f"Process timeout after {timeout_seconds} seconds")
+                            return
+                            
+                        if response is None:
+                            continue
+                        if not hasattr(response, 'name') or not response.name:
+                            continue
+                        
+                        agent_name = response.name
+                        latest_responses[agent_name] = response
+                        
+                        # Count scheduler attempts to avoid infinite loops
+                        if agent_name == SCHEDULER_AGENT:
+                            scheduler_attempts += 1
+                            if scheduler_attempts >= max_scheduler_attempts:
+                                print(f"Reached maximum scheduler attempts ({max_scheduler_attempts})")
+                        
+                        # Check if we've got responses from all expected agents
+                        if all(agent in latest_responses for agent in [SCHEDULER_AGENT, REPORTING_AGENT]):
+                            print("Received responses from all required agents, terminating early")
+                            return
+                            
+                except asyncio.CancelledError:
+                    print("Process stream task was cancelled")
+                    raise
+                except Exception as e:
+                    print(f"Error in process_stream: {e}")
+                    import traceback
+                    traceback.print_exc()
+                finally:
+                    # Remove this task from the running set when done
+                    if process_task in running_tasks:
+                        running_tasks.remove(process_task)
+            
+            # Create the main processing task
+            process_task = asyncio.create_task(process_stream())
+            running_tasks.add(process_task)
+            
+            # Create a timeout task
+            timeout_task = asyncio.create_task(asyncio.sleep(timeout_seconds))
+            
+            # Set up tasks to wait for
+            wait_tasks = {process_task, timeout_task}
+            
+            # Add cancellation token if provided - FIX HERE
+            if cancellation_token:
+                # Create a task that will complete when the cancellation token is done
+                async def wait_for_cancellation():
+                    # Wait for the future to complete
+                    await asyncio.shield(cancellation_token)
+                    return True
                     
-                if response is None:
-                    continue
-                if not hasattr(response, 'name') or not response.name:
-                    continue
+                cancellation_task = asyncio.create_task(wait_for_cancellation())
+                wait_tasks.add(cancellation_task)
+            
+            # Wait for completion or timeout
+            done, pending = await asyncio.wait(
+                wait_tasks,
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            
+            # Cancel any pending tasks
+            for task in pending:
+                task.cancel()
                 
-                agent_name = response.name
-                latest_responses[agent_name] = response
-                
-                # Count scheduler attempts to avoid infinite loops
-                if agent_name == SCHEDULER_AGENT:
-                    scheduler_attempts += 1
-                    if scheduler_attempts >= max_scheduler_attempts:
-                        print(f"Reached maximum scheduler attempts ({max_scheduler_attempts})")
-                
-                # Check if we've got responses from all expected agents
-                if all(agent in latest_responses for agent in [SCHEDULER_AGENT, REPORTING_AGENT]):
-                    print("Received responses from all required agents, terminating early")
-                    break
-                
+            # Clean up running tasks if needed
+            for task in running_tasks.copy():
+                if not task.done():
+                    task.cancel()
+                    
+            # Handle timeout
+            if timeout_task in done:
+                print(f"Process timed out after {timeout_seconds} seconds")
+            
+            # Handle cancellation
+            if cancellation_token and cancellation_token.done():
+                print("Process was cancelled")
+            
         except asyncio.TimeoutError:
             print(f"Process timed out after {timeout_seconds} seconds")
         except Exception as e:
             print(f"Error during _process_with_timeout: {e}")
             import traceback
             traceback.print_exc()
-    
+
     async def process_message(self, session_id, message):
         """Processes a user message and returns the combined response from all agents."""
         
@@ -422,15 +549,22 @@ class ChatbotManager:
                 
                 # Wait if session is still initializing
                 retry_count = 0
-                while session.get("initializing", False) and retry_count < 50:
+                max_retry = 50
+                while session.get("initializing", False) and retry_count < max_retry:
                     await asyncio.sleep(0.1)
-                    session = self.chat_sessions.get(session_id, {})
+                    
+                    # Re-get the session in case it was updated
+                    if session_id in self.chat_sessions:
+                        session = self.chat_sessions[session_id]
+                    else:
+                        break
+                        
                     retry_count += 1
                 
                 if session.get("initializing", False):
                     return {
                         "status": "error",
-                        "error": "Session initialization timed out. Please try again.",
+                        "error": f"Session initialization timed out after {max_retry * 0.1} seconds. Please try again.",
                         "conversation_id": None
                     }
                 
@@ -442,6 +576,11 @@ class ChatbotManager:
                         if session_id in self.chat_sessions:
                             del self.chat_sessions[session_id]
                     session = await self.initialize_session(session_id)
+                
+                # Reset the cancellation token for this new message
+                if "cancellation_token" in session and session["cancellation_token"].done():
+                    async with self._session_lock:
+                        session["cancellation_token"] = asyncio.Future()
                 
                 # Use the conversation ID from the session, or generate a new one if missing
                 conversation_id = session.get("conversation_id", str(uuid.uuid4()))
@@ -521,9 +660,11 @@ class ChatbotManager:
                 # Get the responses from all agents - use a dictionary to track latest response from each agent
                 latest_responses = {}
                 
+                # Get the cancellation token from the session
+                cancellation_token = session.get("cancellation_token")
+                
                 # Set a timeout for the entire chat invocation process
-                invoke_timeout = 120  # seconds
-                start_time = time.time()
+                invoke_timeout = 180  # seconds (increased from 120)
                 
                 try:
                     if is_specific_risk:
@@ -532,23 +673,66 @@ class ChatbotManager:
                         
                         # Step 1: Get the scheduler response first with timeout
                         scheduler_response = None
-                        scheduler_timeout = 30  # seconds
+                        scheduler_timeout = 60  # seconds (increased from 30)
                         
                         try:
                             # Create a task to get scheduler response with timeout
                             async def get_scheduler_response():
                                 nonlocal scheduler_response
                                 async for response in chat.invoke():
+                                    # Check for cancellation
+                                    if cancellation_token and cancellation_token.done():
+                                        print("Scheduler processing cancelled via token")
+                                        return
+                                    
                                     if response and hasattr(response, 'name') and response.name == SCHEDULER_AGENT:
                                         scheduler_response = response
                                         latest_responses[SCHEDULER_AGENT] = response
                                         return
                             
-                            # Wait for scheduler response with timeout
-                            await asyncio.wait_for(get_scheduler_response(), timeout=scheduler_timeout)
+                            # Add retry mechanism for scheduler
+                            retry_count = 0
+                            max_retries = 2
                             
-                        except asyncio.TimeoutError:
-                            print(f"Scheduler agent timed out after {scheduler_timeout} seconds")
+                            while retry_count <= max_retries:
+                                try:
+                                    # Create a task for the operation
+                                    scheduler_task = asyncio.create_task(get_scheduler_response())
+                                    
+                                    # Track the task
+                                    if session_id in self._session_tasks:
+                                        self._session_tasks[session_id].append(scheduler_task)
+                                    
+                                    # Wait for scheduler response with timeout
+                                    await asyncio.wait_for(scheduler_task, timeout=scheduler_timeout)
+                                    break  # Success, exit the retry loop
+                                except asyncio.TimeoutError:
+                                    retry_count += 1
+                                    if retry_count <= max_retries:
+                                        print(f"Scheduler timeout, retry {retry_count}/{max_retries}")
+                                        await asyncio.sleep(1)  # Brief pause before retry
+                                    else:
+                                        print(f"Scheduler agent timed out after {scheduler_timeout} seconds and {max_retries} retries")
+                                finally:
+                                    # Clean up the task reference
+                                    if session_id in self._session_tasks and scheduler_task in self._session_tasks[session_id]:
+                                        self._session_tasks[session_id].remove(scheduler_task)
+                            
+                        except asyncio.CancelledError:
+                            print("Scheduler task cancelled")
+                            raise
+                        except Exception as e:
+                            print(f"Error getting scheduler response: {e}")
+                            import traceback
+                            traceback.print_exc()
+                        
+                        # Check for cancellation
+                        if cancellation_token and cancellation_token.done():
+                            return {
+                                "status": "cancelled",
+                                "error": "Operation was cancelled",
+                                "conversation_id": conversation_id
+                            }
                         
                         if scheduler_response:
                             print("Scheduler response received, preparing for risk agent")
@@ -637,70 +821,236 @@ class ChatbotManager:
                                 await chat.add_chat_message(risk_agent_message)
                                 
                                 # Now get the risk agent's response with timeout
-                                risk_timeout = 60  # seconds
+                                risk_timeout = 80  # seconds (increased from 60)
                                 try:
                                     # Create a task to get risk agent response with timeout
                                     async def get_risk_response():
                                         async for response in chat.invoke():
+                                            # Check for cancellation
+                                            if cancellation_token and cancellation_token.done():
+                                                print(f"{target_risk_agent} processing cancelled via token")
+                                                return
+                                                
                                             if response and hasattr(response, 'name') and response.name == target_risk_agent:
                                                 latest_responses[target_risk_agent] = response
                                                 return
                                     
-                                    # Wait for risk agent response with timeout
-                                    await asyncio.wait_for(get_risk_response(), timeout=risk_timeout)
+                                    # Add retry logic for risk agent
+                                    retry_count = 0
+                                    max_retries = 2
                                     
-                                except asyncio.TimeoutError:
-                                    print(f"Risk agent {target_risk_agent} timed out after {risk_timeout} seconds")
+                                    while retry_count <= max_retries:
+                                        try:
+                                            # Create a task for the operation
+                                            risk_task = asyncio.create_task(get_risk_response())
+                                            
+                                            # Track the task
+                                            if session_id in self._session_tasks:
+                                                self._session_tasks[session_id].append(risk_task)
+                                            
+                                            # Wait for risk agent response with timeout
+                                            await asyncio.wait_for(risk_task, timeout=risk_timeout)
+                                            break  # Success, exit the retry loop
+                                        except asyncio.TimeoutError:
+                                            retry_count += 1
+                                            if retry_count <= max_retries:
+                                                print(f"{target_risk_agent} timeout, retry {retry_count}/{max_retries}")
+                                                await asyncio.sleep(1)  # Brief pause before retry
+                                            else:
+                                                print(f"Risk agent {target_risk_agent} timed out after {risk_timeout} seconds and {max_retries} retries")
+                                        finally:
+                                            # Clean up the task reference
+                                            if session_id in self._session_tasks and risk_task in self._session_tasks[session_id]:
+                                                self._session_tasks[session_id].remove(risk_task)
+                                    
+                                except asyncio.CancelledError:
+                                    print(f"{target_risk_agent} task cancelled")
+                                    raise
+                                except Exception as e:
+                                    print(f"Error getting {target_risk_agent} response: {e}")
+                                
+                                # Check for cancellation
+                                if cancellation_token and cancellation_token.done():
+                                    return {
+                                        "status": "cancelled",
+                                        "error": "Operation was cancelled",
+                                        "conversation_id": conversation_id
+                                    }
                                 
                                 # If we got a risk response, now get the reporting agent's response
                                 if target_risk_agent in latest_responses:
                                     print(f"{target_risk_agent} response received, continuing to reporting agent")
-                                    reporting_timeout = 30  # seconds
+                                    reporting_timeout = 60  # seconds (increased from 30)
                                     try:
                                         # Create a task to get reporting agent response with timeout
                                         async def get_reporting_response():
                                             async for response in chat.invoke():
+                                                # Check for cancellation
+                                                if cancellation_token and cancellation_token.done():
+                                                    print("Reporting agent processing cancelled via token")
+                                                    return
+                                                
                                                 if response and hasattr(response, 'name') and response.name == REPORTING_AGENT:
                                                     latest_responses[REPORTING_AGENT] = response
                                                     return
                                         
-                                        # Wait for reporting agent response with timeout
-                                        await asyncio.wait_for(get_reporting_response(), timeout=reporting_timeout)
+                                        # Add retry logic for reporting agent
+                                        retry_count = 0
+                                        max_retries = 2
                                         
-                                    except asyncio.TimeoutError:
-                                        print(f"Reporting agent timed out after {reporting_timeout} seconds")
+                                        while retry_count <= max_retries:
+                                            try:
+                                                # Create a task for the operation
+                                                reporting_task = asyncio.create_task(get_reporting_response())
+                                                
+                                                # Track the task
+                                                if session_id in self._session_tasks:
+                                                    self._session_tasks[session_id].append(reporting_task)
+                                                
+                                                # Wait for reporting agent response with timeout
+                                                await asyncio.wait_for(reporting_task, timeout=reporting_timeout)
+                                                break  # Success, exit the retry loop
+                                            except asyncio.TimeoutError:
+                                                retry_count += 1
+                                                if retry_count <= max_retries:
+                                                    print(f"Reporting agent timeout, retry {retry_count}/{max_retries}")
+                                                    await asyncio.sleep(1)  # Brief pause before retry
+                                                else:
+                                                    print(f"Reporting agent timed out after {reporting_timeout} seconds and {max_retries} retries")
+                                            finally:
+                                                # Clean up the task reference
+                                                if session_id in self._session_tasks and reporting_task in self._session_tasks[session_id]:
+                                                    self._session_tasks[session_id].remove(reporting_task)
+                                        
+                                    except asyncio.CancelledError:
+                                        print("Reporting task cancelled")
+                                        raise
+                                    except Exception as e:
+                                        print(f"Error getting reporting agent response: {e}")
                                 else:
                                     print(f"No response from {target_risk_agent}, falling back to regular flow")
                                     # Continue with normal flow if risk agent didn't respond
-                                    await self._process_with_timeout(chat, latest_responses, max(0, invoke_timeout - (time.time() - start_time)))
+                                    process_task = asyncio.create_task(
+                                        self._process_with_timeout(
+                                            chat, 
+                                            latest_responses,
+                                            max(1, invoke_timeout - (time.time() - time.time())),
+                                            cancellation_token
+                                        )
+                                    )
+                                    # Track the task
+                                    if session_id in self._session_tasks:
+                                        self._session_tasks[session_id].append(process_task)
+                                    
+                                    try:
+                                        await process_task
+                                    finally:
+                                        # Clean up the task reference
+                                        if session_id in self._session_tasks and process_task in self._session_tasks[session_id]:
+                                            self._session_tasks[session_id].remove(process_task)
                             else:
                                 print("No specific risk agent identified, falling back to normal flow")
                                 # Continue with normal flow if no risk agent was identified
-                                await self._process_with_timeout(chat, latest_responses, max(0, invoke_timeout - (time.time() - start_time)))
+                                process_task = asyncio.create_task(
+                                    self._process_with_timeout(
+                                        chat, 
+                                        latest_responses,
+                                        max(1, invoke_timeout - (time.time() - time.time())),
+                                        cancellation_token
+                                    )
+                                )
+                                # Track the task
+                                if session_id in self._session_tasks:
+                                    self._session_tasks[session_id].append(process_task)
+                                
+                                try:
+                                    await process_task
+                                finally:
+                                    # Clean up the task reference
+                                    if session_id in self._session_tasks and process_task in self._session_tasks[session_id]:
+                                        self._session_tasks[session_id].remove(process_task)
                         else:
                             print("No scheduler response received, falling back to normal flow")
                             # Fall back to normal flow if scheduler didn't respond
-                            await self._process_with_timeout(chat, latest_responses, max(0, invoke_timeout - (time.time() - start_time)))
+                            process_task = asyncio.create_task(
+                                self._process_with_timeout(
+                                    chat, 
+                                    latest_responses,
+                                    max(1, invoke_timeout - (time.time() - time.time())),
+                                    cancellation_token
+                                )
+                            )
+                            # Track the task
+                            if session_id in self._session_tasks:
+                                self._session_tasks[session_id].append(process_task)
+                            
+                            try:
+                                await process_task
+                            finally:
+                                # Clean up the task reference
+                                if session_id in self._session_tasks and process_task in self._session_tasks[session_id]:
+                                    self._session_tasks[session_id].remove(process_task)
                     
                     elif is_comprehensive_risk:
                         # For comprehensive risk analysis, we use parallel execution with timeouts
                         risk_agents = [POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT]
                         
                         # First, get scheduler response with timeout
-                        scheduler_timeout = 30  # seconds
+                        scheduler_timeout = 60  # seconds (increased from 30)
                         try:
                             # Create a task to get scheduler response with timeout
                             async def get_scheduler_response():
                                 async for response in chat.invoke():
+                                    # Check for cancellation
+                                    if cancellation_token and cancellation_token.done():
+                                        print("Scheduler processing cancelled via token")
+                                        return
+                                
                                     if response and hasattr(response, 'name') and response.name == SCHEDULER_AGENT:
                                         latest_responses[SCHEDULER_AGENT] = response
                                         return
                             
-                            # Wait for scheduler response with timeout
-                            await asyncio.wait_for(get_scheduler_response(), timeout=scheduler_timeout)
+                            # Add retry mechanism for scheduler
+                            retry_count = 0
+                            max_retries = 2
                             
-                        except asyncio.TimeoutError:
-                            print(f"Scheduler agent timed out after {scheduler_timeout} seconds")
+                            while retry_count <= max_retries:
+                                try:
+                                    # Create a task for the operation
+                                    scheduler_task = asyncio.create_task(get_scheduler_response())
+                                    
+                                    # Track the task
+                                    if session_id in self._session_tasks:
+                                        self._session_tasks[session_id].append(scheduler_task)
+                                    
+                                    # Wait for scheduler response with timeout
+                                    await asyncio.wait_for(scheduler_task, timeout=scheduler_timeout)
+                                    break  # Success, exit the retry loop
+                                except asyncio.TimeoutError:
+                                    retry_count += 1
+                                    if retry_count <= max_retries:
+                                        print(f"Scheduler timeout, retry {retry_count}/{max_retries}")
+                                        await asyncio.sleep(1)  # Brief pause before retry
+                                    else:
+                                        print(f"Scheduler agent timed out after {scheduler_timeout} seconds and {max_retries} retries")
+                                finally:
+                                    # Clean up the task reference
+                                    if session_id in self._session_tasks and scheduler_task in self._session_tasks[session_id]:
+                                        self._session_tasks[session_id].remove(scheduler_task)
+                            
+                        except asyncio.CancelledError:
+                            print("Scheduler task cancelled")
+                            raise
+                        except Exception as e:
+                            print(f"Error getting scheduler response: {e}")
+                        
+                        # Check for cancellation
+                        if cancellation_token and cancellation_token.done():
+                            return {
+                                "status": "cancelled",
+                                "error": "Operation was cancelled",
+                                "conversation_id": conversation_id
+                            }
                         
                         # If we have scheduler response, process risk agents in parallel
                         if SCHEDULER_AGENT in latest_responses:
@@ -727,45 +1077,141 @@ class ChatbotManager:
                             risk_tasks = []
                             for risk_agent in risk_agents:
                                 # Create a task for each risk agent using rate limiter
-                                task = self.process_agent_with_rate_limit(
-                                    chat=chat,
-                                    agent_name=risk_agent,
-                                    message_content=latest_responses[SCHEDULER_AGENT].content
+                                task = asyncio.create_task(
+                                    self.process_agent_with_rate_limit(
+                                        chat=chat,
+                                        agent_name=risk_agent,
+                                        message_content=latest_responses[SCHEDULER_AGENT].content
+                                    )
                                 )
                                 risk_tasks.append(task)
+                                
+                                # Track the task
+                                if session_id in self._session_tasks:
+                                    self._session_tasks[session_id].append(task)
                             
                             # Execute all risk agents in parallel with rate limiting
-                            risk_results = await asyncio.gather(*risk_tasks, return_exceptions=True)
+                            try:
+                                risk_results = await asyncio.gather(*risk_tasks, return_exceptions=True)
+                                
+                                # Process results
+                                for i, result in enumerate(risk_results):
+                                    if isinstance(result, Exception):
+                                        print(f"Error executing {risk_agents[i]}: {result}")
+                                    elif result:
+                                        latest_responses[risk_agents[i]] = result
+                            finally:
+                                # Clean up task references
+                                if session_id in self._session_tasks:
+                                    for task in risk_tasks:
+                                        if task in self._session_tasks[session_id]:
+                                            self._session_tasks[session_id].remove(task)
                             
-                            # Process results
-                            for i, result in enumerate(risk_results):
-                                if isinstance(result, Exception):
-                                    print(f"Error executing {risk_agents[i]}: {result}")
-                                elif result:
-                                    latest_responses[risk_agents[i]] = result
+                            # Check for cancellation
+                            if cancellation_token and cancellation_token.done():
+                                return {
+                                    "status": "cancelled", 
+                                    "error": "Operation was cancelled",
+                                    "conversation_id": conversation_id
+                                }
                             
                             # Now get reporting agent response with timeout
-                            reporting_timeout = 30  # seconds
+                            reporting_timeout = 60  # seconds (increased from 30)
                             try:
                                 # Create a task to get reporting agent response with timeout
                                 async def get_reporting_response():
                                     async for response in chat.invoke():
+                                        # Check for cancellation
+                                        if cancellation_token and cancellation_token.done():
+                                            print("Reporting agent processing cancelled via token")
+                                            return
+                                    
                                         if response and hasattr(response, 'name') and response.name == REPORTING_AGENT:
                                             latest_responses[REPORTING_AGENT] = response
                                             return
                                 
-                                # Wait for reporting agent response with timeout
-                                await asyncio.wait_for(get_reporting_response(), timeout=reporting_timeout)
+                                # Add retry logic for reporting agent
+                                retry_count = 0
+                                max_retries = 2
                                 
-                            except asyncio.TimeoutError:
-                                print(f"Reporting agent timed out after {reporting_timeout} seconds")
+                                while retry_count <= max_retries:
+                                    try:
+                                        # Create a task for the operation
+                                        reporting_task = asyncio.create_task(get_reporting_response())
+                                        
+                                        # Track the task
+                                        if session_id in self._session_tasks:
+                                            self._session_tasks[session_id].append(reporting_task)
+                                        
+                                        # Wait for reporting agent response with timeout
+                                        await asyncio.wait_for(reporting_task, timeout=reporting_timeout)
+                                        break  # Success, exit the retry loop
+                                    except asyncio.TimeoutError:
+                                        retry_count += 1
+                                        if retry_count <= max_retries:
+                                            print(f"Reporting agent timeout, retry {retry_count}/{max_retries}")
+                                            await asyncio.sleep(1)  # Brief pause before retry
+                                        else:
+                                            print(f"Reporting agent timed out after {reporting_timeout} seconds and {max_retries} retries")
+                                    finally:
+                                        # Clean up the task reference
+                                        if session_id in self._session_tasks and reporting_task in self._session_tasks[session_id]:
+                                            self._session_tasks[session_id].remove(reporting_task)
+                                
+                            except asyncio.CancelledError:
+                                print("Reporting task cancelled")
+                                raise
+                            except Exception as e:
+                                print(f"Error getting reporting agent response: {e}")
                         else:
                             # If no scheduler response, try to get responses from other agents
-                            await self._process_with_timeout(chat, latest_responses, max(0, invoke_timeout - (time.time() - start_time)))
+                            process_task = asyncio.create_task(
+                                self._process_with_timeout(
+                                    chat, 
+                                    latest_responses, 
+                                    max(1, invoke_timeout - (time.time() - time.time())),
+                                    cancellation_token
+                                )
+                            )
+                            # Track the task
+                            if session_id in self._session_tasks:
+                                self._session_tasks[session_id].append(process_task)
+                            
+                            try:
+                                await process_task
+                            finally:
+                                # Clean up the task reference
+                                if session_id in self._session_tasks and process_task in self._session_tasks[session_id]:
+                                    self._session_tasks[session_id].remove(process_task)
                     else:
                         # For non-comprehensive queries, use the normal flow with timeout
-                        await self._process_with_timeout(chat, latest_responses, invoke_timeout)
+                        process_task = asyncio.create_task(
+                            self._process_with_timeout(
+                                chat, 
+                                latest_responses, 
+                                invoke_timeout,
+                                cancellation_token
+                            )
+                        )
+                        # Track the task
+                        if session_id in self._session_tasks:
+                            self._session_tasks[session_id].append(process_task)
+                        
+                        try:
+                            await process_task
+                        finally:
+                            # Clean up the task reference
+                            if session_id in self._session_tasks and process_task in self._session_tasks[session_id]:
+                                self._session_tasks[session_id].remove(process_task)
                     
+                except asyncio.CancelledError:
+                    print(f"Processing for session {session_id} was cancelled")
+                    return {
+                        "status": "cancelled",
+                        "error": "Operation was cancelled",
+                        "conversation_id": conversation_id
+                    }
+                
                 except asyncio.TimeoutError:
                     print(f"Chat invocation timed out after {invoke_timeout} seconds")
                     # Don't return error, just continue with what we have
@@ -796,6 +1242,14 @@ class ChatbotManager:
                             "conversation_id": conversation_id
                         }
                     # Otherwise continue with what we have
+                
+                # Check if operation was cancelled
+                if cancellation_token and cancellation_token.done():
+                    return {
+                        "status": "cancelled",
+                        "error": "Operation was cancelled",
+                        "conversation_id": conversation_id
+                    }
                 
                 # For schedule-related queries, ensure data is properly passed from SCHEDULER to REPORTING agent
                 if is_schedule_related:
@@ -1054,94 +1508,162 @@ class ChatbotManager:
                 async with self._session_lock:
                     if session_id not in self.chat_sessions and session_id in self._processing_locks:
                         del self._processing_locks[session_id]
+                        
+                # Cancel and clean up any tasks that might still be running
+                if session_id in self._session_tasks:
+                    tasks_to_cancel = self._session_tasks[session_id].copy()
+                    for task in tasks_to_cancel:
+                        if not task.done():
+                            task.cancel()
+                    # Wait for a brief moment to allow tasks to clean up
+                    if tasks_to_cancel:
+                        try:
+                            await asyncio.sleep(0.1)
+                        except asyncio.CancelledError:
+                            pass
     
     async def cleanup_sessions(self, max_age_minutes=30):
-        """Cleans up inactive chat sessions."""
+        """Cleans up inactive chat sessions with improved resource management."""
         now = datetime.now()
         sessions_to_remove = []
         
         async with self._session_lock:
             for session_id, session in self.chat_sessions.items():
-                # Check if session is older than max_age_minutes
-                if (now - session["last_activity"]).total_seconds() > max_age_minutes * 60:
+                # Check if session is older than max_age_minutes or requested to clean all (max_age_minutes=0)
+                if max_age_minutes == 0 or (now - session["last_activity"]).total_seconds() > max_age_minutes * 60:
                     sessions_to_remove.append(session_id)
         
         # Remove inactive sessions
         for session_id in sessions_to_remove:
-            await self.close_session(session_id)
-            print(f"Removed inactive session: {session_id}")
+            try:
+                await self.close_session(session_id)
+                print(f"Removed inactive session: {session_id}")
+            except Exception as e:
+                print(f"Error removing session {session_id}: {e}")
                 
         return len(sessions_to_remove)
 
     async def close_session(self, session_id):
-        """Properly closes a chat session and all associated resources."""
+        """Properly closes a chat session and all associated resources with improved error handling."""
+        session = None
+        
         async with self._session_lock:
             if session_id not in self.chat_sessions:
                 return False
                 
             session = self.chat_sessions[session_id]
+            # Mark the session as closing to prevent new operations
+            session["closing"] = True
         
         # Set a timeout for closing resources
         close_timeout = 5  # seconds
         
-        # Close the client if it exists
-        if "client" in session:
-            try:
-                client = session["client"]
-                # Check if it has a close method that's async
-                if hasattr(client, 'close') and callable(client.close):
-                    if asyncio.iscoroutinefunction(client.close):
-                        try:
-                            await asyncio.wait_for(client.close(), timeout=close_timeout)
-                        except asyncio.TimeoutError:
-                            print(f"Timeout closing client for session {session_id}")
-                    else:
-                        client.close()
-                    print(f"Closed client for session {session_id}")
-            except Exception as e:
-                print(f"Error closing client for session {session_id}: {e}")
-        
-        # Close the credential if it exists
-        if "credential" in session:
-            try:
-                credential = session["credential"]
-                if hasattr(credential, 'close') and callable(credential.close):
-                    if asyncio.iscoroutinefunction(credential.close):
-                        try:
-                            await asyncio.wait_for(credential.close(), timeout=close_timeout)
-                        except asyncio.TimeoutError:
-                            print(f"Timeout closing credential for session {session_id}")
-                    else:
-                        credential.close()
-                    print(f"Closed credential for session {session_id}")
-            except Exception as e:
-                print(f"Error closing credential for session {session_id}: {e}")
-        
-        # Close any HTTP client sessions that might be open in the agents
-        if "chat" in session:
-            try:
-                chat = session["chat"]
-                # Check each agent in the chat
-                if hasattr(chat, 'agents'):
-                    for agent in chat.agents:
-                        if hasattr(agent, 'client') and hasattr(agent.client, '_session'):
-                            try:
-                                await asyncio.wait_for(agent.client._session.close(), timeout=close_timeout)
-                                print(f"Closed HTTP session for agent {agent.name}")
-                            except asyncio.TimeoutError:
-                                print(f"Timeout closing HTTP session for agent {agent.name}")
-                            except Exception as e:
-                                print(f"Error closing HTTP session for agent {agent.name}: {e}")
-            except Exception as e:
-                print(f"Error closing agent HTTP sessions: {e}")
-        
-        # Delete the session and its processing lock
-        async with self._session_lock:
-            if session_id in self.chat_sessions:
-                del self.chat_sessions[session_id]
+        try:
+            # Cancel any pending tasks first
+            if session_id in self._session_tasks:
+                tasks_to_cancel = self._session_tasks[session_id].copy()
+                for task in tasks_to_cancel:
+                    if not task.done():
+                        task.cancel()
+                        
+                # Wait briefly for tasks to cancel
+                if tasks_to_cancel:
+                    try:
+                        await asyncio.wait(tasks_to_cancel, timeout=1.0)
+                    except Exception as e:
+                        print(f"Error waiting for tasks to cancel in session {session_id}: {e}")
+                        
+                # Clear the task list
+                self._session_tasks[session_id] = []
             
-            # Also clean up the processing lock if it exists
-            if session_id in self._processing_locks:
-                del self._processing_locks[session_id]
+            # Cancel the cancellation token if it exists
+            if "cancellation_token" in session and not session["cancellation_token"].done():
+                session["cancellation_token"].set_result(True)
+            
+            # Check if there are any tasks still running in the chat
+            if "chat" in session and hasattr(session["chat"], "_current_chat_task") and session["chat"]._current_chat_task is not None:
+                try:
+                    session["chat"]._current_chat_task.cancel()
+                    await asyncio.sleep(0.1)  # Brief pause to allow cancellation to process
+                except Exception as e:
+                    print(f"Error cancelling chat task for session {session_id}: {e}")
+            
+            # Similarly for parallel chat
+            if "parallel_chat" in session and hasattr(session["parallel_chat"], "_current_chat_task") and session["parallel_chat"]._current_chat_task is not None:
+                try:
+                    session["parallel_chat"]._current_chat_task.cancel()
+                    await asyncio.sleep(0.1)  # Brief pause to allow cancellation to process
+                except Exception as e:
+                    print(f"Error cancelling parallel chat task for session {session_id}: {e}")
+                    
+            # Close the client if it exists
+            if "client" in session:
+                try:
+                    client = session["client"]
+                    # Check if it has a close method that's async
+                    if hasattr(client, 'close') and callable(client.close):
+                        if asyncio.iscoroutinefunction(client.close):
+                            try:
+                                await asyncio.wait_for(client.close(), timeout=close_timeout)
+                            except asyncio.TimeoutError:
+                                print(f"Timeout closing client for session {session_id}")
+                        else:
+                            client.close()
+                        print(f"Closed client for session {session_id}")
+                except Exception as e:
+                    print(f"Error closing client for session {session_id}: {e}")
+            
+            # Close the credential if it exists
+            if "credential" in session:
+                try:
+                    credential = session["credential"]
+                    if hasattr(credential, 'close') and callable(credential.close):
+                        if asyncio.iscoroutinefunction(credential.close):
+                            try:
+                                await asyncio.wait_for(credential.close(), timeout=close_timeout)
+                            except asyncio.TimeoutError:
+                                print(f"Timeout closing credential for session {session_id}")
+                        else:
+                            credential.close()
+                        print(f"Closed credential for session {session_id}")
+                except Exception as e:
+                    print(f"Error closing credential for session {session_id}: {e}")
+            
+            # Close any HTTP client sessions that might be open in the agents
+            if "chat" in session:
+                try:
+                    chat = session["chat"]
+                    # Check each agent in the chat
+                    if hasattr(chat, 'agents'):
+                        for agent in chat.agents:
+                            if hasattr(agent, 'client') and hasattr(agent.client, '_session'):
+                                try:
+                                    await asyncio.wait_for(agent.client._session.close(), timeout=close_timeout)
+                                    print(f"Closed HTTP session for agent {agent.name}")
+                                except asyncio.TimeoutError:
+                                    print(f"Timeout closing HTTP session for agent {agent.name}")
+                                except Exception as e:
+                                    print(f"Error closing HTTP session for agent {agent.name}: {e}")
+                except Exception as e:
+                    print(f"Error closing agent HTTP sessions: {e}")
+        
+        except Exception as e:
+            print(f"Error during session cleanup for {session_id}: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        finally:
+            # Always delete the session and its processing lock regardless of errors
+            async with self._session_lock:
+                if session_id in self.chat_sessions:
+                    del self.chat_sessions[session_id]
+                
+                # Also clean up the processing lock if it exists
+                if session_id in self._processing_locks:
+                    del self._processing_locks[session_id]
+                    
+                # Clean up session tasks if they exist
+                if session_id in self._session_tasks:
+                    del self._session_tasks[session_id]
         
         return True
