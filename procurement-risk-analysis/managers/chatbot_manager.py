@@ -53,26 +53,8 @@ class ChatbotManager:
         
         # Get Bing API key from environment
         self.bing_api_key = os.getenv("BING_SEARCH_API_KEY")
-        self.bing_connection_name = os.getenv("BING_CONNECTION_NAME", "bing")
-        
-        # Get project connection string
-        self.project_connection_string = os.getenv("AZURE_AI_AGENT_PROJECT_CONNECTION_STRING")
-        
-        # Create project client if we have all required values
-        self.project_client = None
-        if self.bing_api_key and self.project_connection_string:
-            try:
-                from azure.ai.projects import AIProjectClient
-                from azure.identity import DefaultAzureCredential
-                
-                self.project_client = AIProjectClient.from_connection_string(
-                    credential=DefaultAzureCredential(),
-                    conn_str=self.project_connection_string
-                )
-                print("Successfully created AIProjectClient for Bing grounding")
-            except Exception as e:
-                print(f"Could not create AIProjectClient: {e}")
-                self.project_client = None
+        if not self.bing_api_key:
+            print("WARNING: BING_SEARCH_API_KEY not found in environment variables")
     
     def __del__(self):
         """Destructor to ensure resources are cleaned up."""
