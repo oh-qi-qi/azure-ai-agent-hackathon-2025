@@ -1,0 +1,34 @@
+General Chat (Assistant Agent only):
+
+"Hello, how are you?"
+"What can you help me with?"
+"How does this system work?"
+
+Schedule Risk (Scheduler Agent only):
+
+"Show me the schedule risks"
+"What equipment has delivery delays?"
+"Analyze schedule variance risks"
+
+Specific Risk (Scheduler → Specific Risk Agent):
+
+"What are the political risks?"
+"Show me tariff risks"
+"Analyze logistics risks"
+
+Comprehensive Risk (All agents → Reporting):
+
+"What are all the risks?"
+"Give me a comprehensive risk analysis"
+"Show me a full risk assessment"
+
+Report Generation (Reporting Agent only):
+
+"Generate a report for conversation ID [xyz]"
+"Create a report from our previous discussion"
+
+Help/Guide (Assistant Agent only):
+
+"Help"
+"What types of analysis can you do?"
+"How do I use this system?"

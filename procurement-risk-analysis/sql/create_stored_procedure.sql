@@ -1,6 +1,6 @@
 -- Script to create all stored procedures
 
--- Create or alter the first stored procedure
+-- Enhanced stored procedure that returns all data needed for various risk agents
 CREATE OR ALTER PROCEDURE sp_GetScheduleComparisonData
 AS
 BEGIN
@@ -8,8 +8,8 @@ BEGIN
 
     DECLARE @today DATE = CAST(GETDATE() AS DATE);
     
-    -- Return raw comparison data for the agent to analyze
     SELECT 
+        -- Basic project and equipment info
         p.project_id,
         p.project_name,
         p.project_code,
@@ -25,17 +25,34 @@ BEGIN
         m.milestone_id,
         m.milestone_number,
         m.milestone_activity,
+        
+        -- Schedule dates
         ps.p6_schedule_due_date,
         ems.equipment_milestone_due_date,
         DATEDIFF(DAY, ps.p6_schedule_due_date, ems.equipment_milestone_due_date) AS days_variance,
         DATEDIFF(DAY, @today, ps.p6_schedule_due_date) AS days_until_p6_due,
+        
+        -- Supplier info
         s.supplier_id,
         s.supplier_name,
         s.supplier_number,
         po.purchase_order_id,
         po.purchase_order_number,
         po.line_item,
-        po.amount
+        po.amount,
+        es.lead_time_days AS supplier_lead_time,
+        
+        -- Manufacturing location data (for Political & Tariff risk)
+        ml.location_address AS manufacturing_location,
+        
+        -- Logistics data (for Logistics risk)
+        li.shipping_port,
+        li.receiving_port,
+        li.logistics_method,
+        
+        -- Alternative suppliers
+        alt.alternatives AS alternative_suppliers
+        
     FROM fact_p6_schedule ps
     JOIN fact_equipment_milestone_schedule ems ON 
         ps.equipment_id = ems.equipment_id AND 
@@ -48,7 +65,23 @@ BEGIN
     JOIN dim_milestone m ON ps.milestone_id = m.milestone_id
     JOIN fact_purchase_order po ON ems.purchase_order_id = po.purchase_order_id
     JOIN dim_supplier s ON po.supplier_id = s.supplier_id
-    -- Get a separate subquery with alternative suppliers info
+    
+    -- Join equipment supplier to get lead time
+    LEFT JOIN dim_equipment_supplier es ON 
+        es.equipment_id = eq.equipment_id AND 
+        es.supplier_id = s.supplier_id
+    
+    -- Join manufacturing location
+    LEFT JOIN dim_manufacturing_location ml ON 
+        ml.equipment_id = eq.equipment_id AND 
+        ml.supplier_id = s.supplier_id
+    
+    -- Join logistics info
+    LEFT JOIN dim_logistics_info li ON 
+        li.equipment_id = eq.equipment_id AND 
+        li.supplier_id = s.supplier_id
+    
+    -- Alternative suppliers info
     OUTER APPLY (
         SELECT STUFF((
             SELECT ',' + alt_s.supplier_name + ' (Cost: ' + 
@@ -60,78 +93,67 @@ BEGIN
             FOR XML PATH('')), 1, 1, '') AS alternatives
     ) AS alt
     WHERE 
-        -- Only looking at delivery milestones (7 is "Delivery to Site" in our sample data)
-        -- You might want to make this configurable or include all milestones
-        m.milestone_id = 7;
+        m.milestone_id = 7; -- Delivery to Site milestone
 END;
 GO
 
--- Create or alter the second stored procedure
-CREATE OR ALTER PROCEDURE sp_LogScheduleVariance
-    @project_id INT,
-    @equipment_id INT,
-    @work_package_id INT,
-    @milestone_id INT,
-    @p6_due_date DATE,
-    @equipment_delivery_date DATE,
-    @days_variance INT,
-    @risk_flag VARCHAR(20),
-    @risk_description VARCHAR(500),
-    @mitigation_action VARCHAR(500),
+-- create_report_procedures.sql
+CREATE PROCEDURE sp_LogRiskReport
+    @session_id VARCHAR(100),
     @conversation_id UNIQUEIDENTIFIER,
-    @variance_id INT OUTPUT
+    @filename VARCHAR(255),
+    @blob_url VARCHAR(1000),
+    @report_type VARCHAR(50) = 'comprehensive'
 AS
 BEGIN
     SET NOCOUNT ON;
     
-    -- Insert into fact_schedule_variance table
-    INSERT INTO fact_schedule_variance (
-        project_id, 
-        equipment_id, 
-        work_package_id, 
-        milestone_id,
-        p6_due_date, 
-        equipment_delivery_date, 
-        days_variance,
-        risk_flag, 
-        risk_description, 
-        mitigation_action, 
-        conversation_id
+    INSERT INTO fact_risk_report (
+        session_id, 
+        conversation_id, 
+        filename,
+        blob_url,
+        report_type
     )
     VALUES (
-        @project_id,
-        @equipment_id,
-        @work_package_id,
-        @milestone_id,
-        @p6_due_date,
-        @equipment_delivery_date,
-        @days_variance,
-        @risk_flag,
-        @risk_description,
-        @mitigation_action,
-        @conversation_id
+        @session_id,
+        @conversation_id,
+        @filename,
+        @blob_url,
+        @report_type
     );
     
-    -- Get the new variance_id
-    SET @variance_id = SCOPE_IDENTITY();
-    
-    RETURN @variance_id;
+    SELECT SCOPE_IDENTITY() as report_id;
 END;
 GO
 
--- Create or alter the third stored procedure
-CREATE PROCEDURE sp_LogAgentEvent
+CREATE PROCEDURE sp_GetReports
+    @session_id VARCHAR(100) = NULL,
+    @conversation_id UNIQUEIDENTIFIER = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    SELECT *
+    FROM fact_risk_report
+    WHERE (@session_id IS NULL OR session_id = @session_id)
+      AND (@conversation_id IS NULL OR conversation_id = @conversation_id)
+    ORDER BY created_date DESC;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE sp_LogAgentEvent
     @agent_name VARCHAR(100),
     @action VARCHAR(100),
     @result_summary VARCHAR(1000) = NULL,
     @conversation_id UNIQUEIDENTIFIER,
+    @session_id VARCHAR(100) = NULL,
     @user_query NVARCHAR(MAX) = NULL,
     @agent_output NVARCHAR(MAX) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
     
-    -- Insert into dim_agent_event_log table
     INSERT INTO dim_agent_event_log (
         event_id,
         agent_name,
@@ -140,7 +162,8 @@ BEGIN
         result_summary,
         user_query,
         agent_output,
-        conversation_id
+        conversation_id,
+        session_id
     )
     VALUES (
         NEWID(),
@@ -150,6 +173,8 @@ BEGIN
         @result_summary,
         @user_query,
         @agent_output,
-        @conversation_id
+        @conversation_id,
+        @session_id
     );
 END;
+GO
