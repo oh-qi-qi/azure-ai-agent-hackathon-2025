@@ -41,7 +41,19 @@ class AutomatedWorkflowTerminationStrategy(TerminationStrategy):
             return True
         return False
 
-# Selection Strategy for interactive chatbot - ENHANCED VERSION
+"""Agent selection and termination strategies."""
+
+from semantic_kernel.agents.strategies import TerminationStrategy, SequentialSelectionStrategy
+from semantic_kernel.contents.utils.author_role import AuthorRole
+import asyncio
+import time
+
+from .agent_definitions import (
+    SCHEDULER_AGENT, REPORTING_AGENT, ASSISTANT_AGENT,
+    POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT
+)
+
+# Selection Strategy for interactive chatbot - FIXED VERSION
 class ChatbotSelectionStrategy(SequentialSelectionStrategy):
     """Enhanced strategy for chatbot interaction with new risk agents."""
     
@@ -95,31 +107,42 @@ class ChatbotSelectionStrategy(SequentialSelectionStrategy):
             # Default case: For general questions, help requests, or chat, use assistant agent
             assistant_agent = next((agent for agent in agents if agent.name == ASSISTANT_AGENT), None)
             if assistant_agent:
-                print("Selecting ASSISTANT_AGENT after user message (general query)")
                 return assistant_agent
         
         # Handle agent sequence flow
         last_agent = history[-1].name if hasattr(history[-1], 'name') else None
         
-        # After scheduler, determine next agent based on original query
+        # FIXED: After scheduler, determine next agent based on original query 
         if last_agent == SCHEDULER_AGENT:
             original_query = next((msg.content for msg in history if msg.role == AuthorRole.USER), "").lower()
             
-            # If only schedule risk, terminate here
-            if "schedule risk" in original_query and not any(keyword in original_query for keyword in ["political", "tariff", "logistics", "all risks"]):
-                return None
+            # If schedule risk analysis only (not specific risk types), go to reporting
+            if any(keyword in original_query for keyword in ["schedule risk", "delay risk", "variance risk"]) and \
+               not any(keyword in original_query for keyword in ["political", "tariff", "logistics", "all risks"]):
+                return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
             
-            # If specific risk type requested
-            if ("political risk" in original_query or "political risks" in original_query) and POLITICAL_RISK_AGENT not in [msg.name for msg in history if hasattr(msg, 'name')]:
-                return next((agent for agent in agents if agent.name == POLITICAL_RISK_AGENT), None)
+            # If specific risk type requested, route to that agent
+            if ("political risk" in original_query or "political risks" in original_query):
+                # Check if POLITICAL_RISK_AGENT has already responded
+                if not any(msg.name == POLITICAL_RISK_AGENT for msg in history):
+                    return next((agent for agent in agents if agent.name == POLITICAL_RISK_AGENT), None)
+                else:
+                    # If political risk agent has responded, go to reporting
+                    return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
             
-            if any(keyword in original_query for keyword in ["tariff risk", "tariff risks", "trade risk"]) and TARIFF_RISK_AGENT not in [msg.name for msg in history if hasattr(msg, 'name')]:
-                return next((agent for agent in agents if agent.name == TARIFF_RISK_AGENT), None)
+            if any(keyword in original_query for keyword in ["tariff risk", "tariff risks", "trade risk"]):
+                if not any(msg.name == TARIFF_RISK_AGENT for msg in history):
+                    return next((agent for agent in agents if agent.name == TARIFF_RISK_AGENT), None)
+                else:
+                    return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
             
-            if any(keyword in original_query for keyword in ["logistics risk", "logistics risks", "shipping risk"]) and LOGISTICS_RISK_AGENT not in [msg.name for msg in history if hasattr(msg, 'name')]:
-                return next((agent for agent in agents if agent.name == LOGISTICS_RISK_AGENT), None)
+            if any(keyword in original_query for keyword in ["logistics risk", "logistics risks", "shipping risk"]):
+                if not any(msg.name == LOGISTICS_RISK_AGENT for msg in history):
+                    return next((agent for agent in agents if agent.name == LOGISTICS_RISK_AGENT), None)
+                else:
+                    return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
             
-            # If comprehensive analysis, trigger all risk agents
+            # If comprehensive analysis, trigger all risk agents in sequence
             if any(keyword in original_query for keyword in ["all risks", "comprehensive", "what are the risks"]):
                 responded_agents = set(msg.name for msg in history if hasattr(msg, 'name'))
                 risk_agent_order = [POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT]
@@ -132,7 +155,7 @@ class ChatbotSelectionStrategy(SequentialSelectionStrategy):
                 if all(agent_name in responded_agents for agent_name in risk_agent_order):
                     return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
         
-        # After a specific risk agent, determine next step
+        # FIXED: After a specific risk agent, go to reporting
         if last_agent in [POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT]:
             original_query = next((msg.content for msg in history if msg.role == AuthorRole.USER), "").lower()
             
@@ -149,8 +172,8 @@ class ChatbotSelectionStrategy(SequentialSelectionStrategy):
                 if all(agent_name in responded_agents for agent_name in risk_agent_order):
                     return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
             else:
-                # For specific risk queries, terminate after specific agent
-                return None
+                # For specific risk queries, go to reporting after risk agent responds
+                return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
         
         # After reporting agent, terminate
         if last_agent == REPORTING_AGENT:
@@ -163,7 +186,7 @@ class ChatbotSelectionStrategy(SequentialSelectionStrategy):
         # Default to assistant agent
         return next((agent for agent in agents if agent.name == ASSISTANT_AGENT), None)
 
-# Termination Strategy for interactive chatbot - ENHANCED VERSION
+# Termination Strategy for interactive chatbot - FIXED VERSION
 class ChatbotTerminationStrategy(TerminationStrategy):
     """Enhanced termination strategy for different query types."""
     
@@ -180,55 +203,48 @@ class ChatbotTerminationStrategy(TerminationStrategy):
                 original_query = msg.content.lower()
                 break
         
-        # Case 1: Schedule-only risk questions
+        # Case 1: Schedule-only risk questions (no specific risk types mentioned)
         if any(keyword in original_query for keyword in ["schedule risk", "delay risk", "variance risk"]) and \
            not any(keyword in original_query for keyword in ["political", "tariff", "logistics", "all risks", "comprehensive"]):
-            # Terminate after scheduler agent responds
-            if any(msg.name == SCHEDULER_AGENT for msg in history):
-                print("Terminating after SCHEDULER_AGENT for schedule-only query")
+            # Terminate after reporting agent responds
+            if any(msg.name == REPORTING_AGENT for msg in history):
                 return True
         
         # Case 2: Specific risk type questions
         if ("political risk" in original_query or "political risks" in original_query) and \
            not any(keyword in original_query for keyword in ["all risks", "comprehensive"]):
-            # Terminate after political risk agent responds
-            if any(msg.name == POLITICAL_RISK_AGENT for msg in history):
-                print("Terminating after POLITICAL_RISK_AGENT")
+            # Terminate after reporting agent responds
+            if any(msg.name == REPORTING_AGENT for msg in history):
                 return True
         
         if any(keyword in original_query for keyword in ["tariff risk", "tariff risks", "trade risk"]) and \
            not any(keyword in original_query for keyword in ["all risks", "comprehensive"]):
-            # Terminate after tariff risk agent responds
-            if any(msg.name == TARIFF_RISK_AGENT for msg in history):
-                print("Terminating after TARIFF_RISK_AGENT")
+            # Terminate after reporting agent responds
+            if any(msg.name == REPORTING_AGENT for msg in history):
                 return True
         
         if any(keyword in original_query for keyword in ["logistics risk", "logistics risks", "shipping risk"]) and \
            not any(keyword in original_query for keyword in ["all risks", "comprehensive"]):
-            # Terminate after logistics risk agent responds
-            if any(msg.name == LOGISTICS_RISK_AGENT for msg in history):
-                print("Terminating after LOGISTICS_RISK_AGENT")
+            # Terminate after reporting agent responds
+            if any(msg.name == REPORTING_AGENT for msg in history):
                 return True
         
         # Case 3: Comprehensive risk analysis
         if any(keyword in original_query for keyword in ["all risks", "comprehensive", "full analysis", "what are the risks"]):
             # Terminate only after reporting agent responds
             if any(msg.name == REPORTING_AGENT for msg in history):
-                print("Terminating after REPORTING_AGENT for comprehensive analysis")
                 return True
         
         # Case 4: Report generation from conversation ID
         if "generate report" in original_query and "conversation id" in original_query:
             # Terminate after reporting agent responds
             if any(msg.name == REPORTING_AGENT for msg in history):
-                print("Terminating after REPORTING_AGENT for report generation")
                 return True
         
         # Case 5: For general chat or help questions
         if any(keyword in original_query for keyword in ["hello", "hi", "help", "what can you do", "how are you"]):
             # Terminate after assistant responds
             if any(msg.name == ASSISTANT_AGENT for msg in history):
-                print("Terminating after ASSISTANT_AGENT for general query")
                 return True
         
         # Default case: Check for standard termination conditions
@@ -238,7 +254,7 @@ class ChatbotTerminationStrategy(TerminationStrategy):
         
         # Don't terminate yet - continue the conversation
         return False
-
+    
 # NEW: Strategy for managing parallel execution of risk analysis agents
 class ParallelRiskAnalysisStrategy(SequentialSelectionStrategy):
     """A strategy for managing parallel execution of risk analysis agents."""

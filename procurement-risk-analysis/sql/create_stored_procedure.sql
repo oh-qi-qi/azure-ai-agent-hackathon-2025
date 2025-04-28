@@ -1,4 +1,4 @@
--- Script to create all stored procedures
+-- Script to create all used stored procedures
 
 -- Enhanced stored procedure that returns all data needed for various risk agents
 CREATE OR ALTER PROCEDURE sp_GetScheduleComparisonData
@@ -97,8 +97,8 @@ BEGIN
 END;
 GO
 
--- create_report_procedures.sql
-CREATE PROCEDURE sp_LogRiskReport
+-- Stored procedure for logging risk reports
+CREATE OR ALTER PROCEDURE sp_LogRiskReport
     @session_id VARCHAR(100),
     @conversation_id UNIQUEIDENTIFIER,
     @filename VARCHAR(255),
@@ -127,7 +127,8 @@ BEGIN
 END;
 GO
 
-CREATE PROCEDURE sp_GetReports
+-- Stored procedure for getting reports
+CREATE OR ALTER PROCEDURE sp_GetReports
     @session_id VARCHAR(100) = NULL,
     @conversation_id UNIQUEIDENTIFIER = NULL
 AS
@@ -142,6 +143,7 @@ BEGIN
 END;
 GO
 
+-- Stored procedure for logging agent events
 CREATE OR ALTER PROCEDURE sp_LogAgentEvent
     @agent_name VARCHAR(100),
     @action VARCHAR(100),

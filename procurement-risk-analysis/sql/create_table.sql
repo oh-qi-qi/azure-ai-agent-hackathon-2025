@@ -1,4 +1,4 @@
--- Script to create all tables with the latest structure
+-- Script to create all tables with the latest structure (only used tables)
 
 -- Create Dimension Tables
 CREATE TABLE dim_project (
@@ -55,7 +55,7 @@ CREATE TABLE dim_supplier (
     CONSTRAINT uq_supplier_number UNIQUE (supplier_number)
 );
 
--- New table to link equipment with suppliers and costs
+-- Table to link equipment with suppliers and costs
 CREATE TABLE dim_equipment_supplier (
     equipment_supplier_id INT IDENTITY(1,1) PRIMARY KEY,
     equipment_id INT NOT NULL,
@@ -79,7 +79,7 @@ CREATE TABLE fact_purchase_order (
     project_id INT NOT NULL,
     work_package_id INT NOT NULL,
     supplier_id INT NOT NULL,
-    equipment_id INT NOT NULL,  -- Now required field
+    equipment_id INT NOT NULL,  -- Required field
     short_text VARCHAR(255),
     remarks VARCHAR(500),
     amount DECIMAL(18,2),
@@ -150,56 +150,7 @@ CREATE TABLE dim_logistics_info (
     CONSTRAINT fk_logistics_info_supplier FOREIGN KEY (supplier_id) REFERENCES dim_supplier(supplier_id)
 );
 
--- Tables for risk management and agent logging
-CREATE TABLE fact_schedule_variance (
-    variance_id INT IDENTITY(1,1) PRIMARY KEY,
-    project_id INT NOT NULL,
-    equipment_id INT NOT NULL,
-    work_package_id INT NOT NULL,
-    milestone_id INT NOT NULL,
-    p6_due_date DATE NOT NULL,
-    equipment_delivery_date DATE NOT NULL,
-    days_variance INT,              -- Positive if late, negative if early
-    risk_flag VARCHAR(20),          -- 'High Risk', 'Medium Risk', 'Low Risk', 'On Track'
-    risk_description VARCHAR(500),  -- Detailed description of the risk
-    mitigation_action VARCHAR(500), -- Suggested actions to mitigate the risk
-    conversation_id UNIQUEIDENTIFIER,  -- Reference to agent event
-    created_date DATETIME DEFAULT GETDATE(),
-    modified_date DATETIME DEFAULT GETDATE(),
-    CONSTRAINT fk_schedule_variance_project FOREIGN KEY (project_id) REFERENCES dim_project(project_id),
-    CONSTRAINT fk_schedule_variance_equipment FOREIGN KEY (equipment_id) REFERENCES dim_equipment(equipment_id),
-    CONSTRAINT fk_schedule_variance_work_package FOREIGN KEY (work_package_id) REFERENCES dim_work_package(work_package_id),
-    CONSTRAINT fk_schedule_variance_milestone FOREIGN KEY (milestone_id) REFERENCES dim_milestone(milestone_id)
-);
-
--- New table for tracking notification history
-CREATE TABLE fact_risk_notification (
-    notification_id INT IDENTITY(1,1) PRIMARY KEY,
-    variance_id INT NOT NULL,
-    notification_time DATETIME NOT NULL,
-    notification_type VARCHAR(50) NOT NULL, -- 'Email', 'SMS', 'Dashboard', etc.
-    recipient VARCHAR(255) NOT NULL,
-    message_content VARCHAR(1000),
-    status VARCHAR(20) DEFAULT 'Sent', -- 'Sent', 'Delivered', 'Read', 'Failed'
-    conversation_id UNIQUEIDENTIFIER,
-    created_date DATETIME DEFAULT GETDATE(),
-    CONSTRAINT fk_risk_notification_variance FOREIGN KEY (variance_id) REFERENCES fact_schedule_variance(variance_id)
-);
-
--- New table for tracking action items and resolutions
-CREATE TABLE fact_risk_action_item (
-    action_item_id INT IDENTITY(1,1) PRIMARY KEY,
-    variance_id INT NOT NULL,
-    action_description VARCHAR(500) NOT NULL,
-    assigned_to VARCHAR(100),
-    due_date DATE,
-    status VARCHAR(50) DEFAULT 'Open', -- 'Open', 'In Progress', 'Resolved', 'Closed'
-    resolution_notes VARCHAR(1000),
-    created_date DATETIME DEFAULT GETDATE(),
-    modified_date DATETIME DEFAULT GETDATE(),
-    CONSTRAINT fk_risk_action_item_variance FOREIGN KEY (variance_id) REFERENCES fact_schedule_variance(variance_id)
-);
-
+-- Agent and logging tables
 CREATE TABLE dim_agent_event_log (
     log_id INT IDENTITY(1,1) PRIMARY KEY,
     event_id UNIQUEIDENTIFIER NOT NULL,
@@ -214,7 +165,6 @@ CREATE TABLE dim_agent_event_log (
     created_date DATETIME DEFAULT GETDATE()
 );
 
--- Create consolidated thinking log table with all features
 CREATE TABLE dim_agent_thinking_log (
     thinking_id INT IDENTITY(1,1) PRIMARY KEY,
     agent_name VARCHAR(100) NOT NULL,
@@ -231,7 +181,6 @@ CREATE TABLE dim_agent_thinking_log (
     created_date DATETIME DEFAULT GETDATE()
 );
 
--- create_report_tracking_table.sql
 CREATE TABLE fact_risk_report (
     report_id INT IDENTITY(1,1) PRIMARY KEY,
     session_id VARCHAR(100) NOT NULL,

@@ -1,6 +1,6 @@
--- Script to insert sample data
+-- Script to insert sample data (only for tables that are actually used)
 
--- Sample data for dim_project with the new columns
+-- Sample data for dim_project
 INSERT INTO dim_project (project_code, project_name, project_country, project_location)
 VALUES ('100000', 'Project A', 'Singapore', 'Tuas South Avenue 14, Singapore 637312');
 
@@ -34,7 +34,7 @@ VALUES
 ('111112', 'Company B', 'George', '123456', 'George@test.com'),
 ('111113', 'Company C', 'Sarah', '789012', 'sarah@test.com');
 
--- Sample data for dim_equipment_supplier - NEW TABLE
+-- Sample data for dim_equipment_supplier
 INSERT INTO dim_equipment_supplier (equipment_id, supplier_id, unit_cost, is_preferred, lead_time_days)
 VALUES 
 -- Equipment 1 (123456) suppliers
@@ -52,7 +52,7 @@ VALUES
 (3, 2, 87500.00, 0, 185),  -- Company B alternative
 (3, 3, 84000.00, 0, 200);  -- Company C alternative
 
--- Sample data for fact_purchase_order - Now with equipment_id
+-- Sample data for fact_purchase_order
 INSERT INTO fact_purchase_order (purchase_order_number, line_item, project_id, work_package_id, supplier_id, equipment_id, short_text, amount)
 VALUES 
 ('PO0001', '10', 1, 1, 1, 1, 'F12 - LV Switchgear, Interconnecting', 85000.00),
@@ -80,7 +80,7 @@ VALUES
 (1, 1, 1, 7, 1, '2026-01-21'),  -- Delivery to Site (earlier than P6 needed date of 2026-02-21)
 
 -- Equipment 123457 milestones
-(2, 1, 1, 1, 2, '2025-05-11'),  -- Assembly Start - Note: Using purchase_order_id 2 now
+(2, 1, 1, 1, 2, '2025-05-11'),  -- Assembly Start
 (2, 1, 1, 2, 2, '2025-10-08'),  -- Mechanical Completion
 (2, 1, 1, 3, 2, '2025-12-07'),  -- Internal Testing
 (2, 1, 1, 4, 2, '2025-12-27'),  -- FAT
@@ -89,7 +89,7 @@ VALUES
 (2, 1, 1, 7, 2, '2026-02-20'),  -- Delivery to Site (earlier than P6 needed date of 2026-02-25)
 
 -- Equipment 123458 milestones
-(3, 1, 1, 1, 3, '2025-05-26'),  -- Assembly Start - Note: Using purchase_order_id 3 now
+(3, 1, 1, 1, 3, '2025-05-26'),  -- Assembly Start
 (3, 1, 1, 2, 3, '2025-10-23'),  -- Mechanical Completion
 (3, 1, 1, 3, 3, '2025-12-22'),  -- Internal Testing
 (3, 1, 1, 4, 3, '2026-01-11'),  -- FAT

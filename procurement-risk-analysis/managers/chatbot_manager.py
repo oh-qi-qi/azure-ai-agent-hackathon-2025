@@ -53,8 +53,26 @@ class ChatbotManager:
         
         # Get Bing API key from environment
         self.bing_api_key = os.getenv("BING_SEARCH_API_KEY")
-        if not self.bing_api_key:
-            print("WARNING: BING_SEARCH_API_KEY not found in environment variables")
+        self.bing_connection_name = os.getenv("BING_CONNECTION_NAME", "bing")
+        
+        # Get project connection string
+        self.project_connection_string = os.getenv("AZURE_AI_AGENT_PROJECT_CONNECTION_STRING")
+        
+        # Create project client if we have all required values
+        self.project_client = None
+        if self.bing_api_key and self.project_connection_string:
+            try:
+                from azure.ai.projects import AIProjectClient
+                from azure.identity import DefaultAzureCredential
+                
+                self.project_client = AIProjectClient.from_connection_string(
+                    credential=DefaultAzureCredential(),
+                    conn_str=self.project_connection_string
+                )
+                print("Successfully created AIProjectClient for Bing grounding")
+            except Exception as e:
+                print(f"Could not create AIProjectClient: {e}")
+                self.project_client = None
     
     def __del__(self):
         """Destructor to ensure resources are cleaned up."""
@@ -138,15 +156,15 @@ class ChatbotManager:
             # Create or reuse all agents
             agents = {}
             
-            # Create Bing connection configuration
+            # Create Bing connection configuration if API key is available
             bing_connection = None
             if self.bing_api_key:
                 bing_connection = {
-                    "bing": {
-                        "api_key": self.bing_api_key,
-                        "endpoint": "https://api.bing.microsoft.com/v7.0/search"
-                    }
+                    "type": "BingGrounding",
+                    "connection_name": "bing",
+                    "api_key": self.bing_api_key
                 }
+                print(f"Bing connection configured with API key: {'*' * 10}{self.bing_api_key[-4:]}")
             else:
                 print("WARNING: Bing search will not be available for risk agents due to missing API key")
             
@@ -408,11 +426,16 @@ class ChatbotManager:
             
             # Determine if this is a comprehensive risk analysis request
             is_comprehensive_risk = any(keyword in message.lower() 
-                                      for keyword in ["all risks", "comprehensive", "full risk", "complete risk", "risk analysis"])
+                                    for keyword in ["all risks", "comprehensive", "full risk", "complete risk", "risk analysis"])
             
             # Check if the message is schedule-related
             is_schedule_related = any(keyword in message.lower() for keyword in 
                                     ["schedule", "risk", "delay", "variance", "late", "delivery", "milestone"])
+            
+            # NEW: Check if this is a specific risk type query
+            is_specific_risk = any(keyword in message.lower() for keyword in 
+                                ["political risk", "political risks", "tariff risk", "tariff risks", 
+                                "logistics risk", "logistics risks", "trade risk", "shipping risk", "port risk"])
             
             # Add the user message to the chat with thinking context
             print(f"Creating user message content for session {session_id}")
@@ -506,17 +529,23 @@ class ChatbotManager:
                             scheduler_attempts += 1
                         
                         # Check termination conditions based on query type
-                        if (ASSISTANT_AGENT in latest_responses and not is_schedule_related):
+                        if (ASSISTANT_AGENT in latest_responses and not is_schedule_related and not is_specific_risk):
                             break
                         
-                        if (is_schedule_related and REPORTING_AGENT in latest_responses):
+                        # For schedule-only queries (not specific risk types), terminate after reporting
+                        if (is_schedule_related and not is_specific_risk and REPORTING_AGENT in latest_responses):
+                            break
+                        
+                        # For specific risk queries, continue until we get reporting agent
+                        if is_specific_risk and REPORTING_AGENT in latest_responses:
                             break
                         
                         # Handle specific risk agent responses
                         if agent_name in [POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT]:
-                            # For specific risk queries, might terminate after risk agent responds
-                            if not is_comprehensive_risk:
-                                break
+                            # For specific risk queries, continue to reporting agent
+                            if is_specific_risk and not is_comprehensive_risk:
+                                continue
+                            # For comprehensive risk, let it continue naturally
                     
             except Exception as e:
                 print(f"Error during chat.invoke(): {e}")
@@ -685,6 +714,17 @@ class ChatbotManager:
             # For comprehensive risk analysis
             if is_comprehensive_risk and REPORTING_AGENT in latest_responses:
                 final_response = latest_responses[REPORTING_AGENT].content.replace("REPORTING_AGENT > ", "")
+            
+            # For specific risk queries
+            elif is_specific_risk:
+                # Check if we have responses from the right agents
+                if REPORTING_AGENT in latest_responses:
+                    final_response = latest_responses[REPORTING_AGENT].content.replace("REPORTING_AGENT > ", "")
+                elif any(agent in latest_responses for agent in [POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT]):
+                    # If we have a risk agent response but no reporting agent
+                    risk_agent = next(agent for agent in [POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT] if agent in latest_responses)
+                    final_response = latest_responses[risk_agent].content.replace(f"{risk_agent} > ", "")
+            
             # For schedule-related queries
             elif is_schedule_related:
                 # Check if we have both scheduler and reporting responses
@@ -718,7 +758,9 @@ class ChatbotManager:
             
             # If no responses were collected, provide a fallback
             if not final_response:
-                if is_schedule_related:
+                if is_specific_risk:
+                    final_response = "I'm sorry, I couldn't analyze the specific risk at this time. Please try again."
+                elif is_schedule_related:
                     final_response = "I'm sorry, I couldn't analyze the schedule data at this time due to system limitations. Please try again in a few minutes."
                 else:
                     final_response = "I'm sorry, I couldn't process your request at this time. Please try again in a moment."

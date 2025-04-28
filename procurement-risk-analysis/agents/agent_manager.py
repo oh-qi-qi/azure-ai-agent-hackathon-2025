@@ -1,6 +1,9 @@
 """Agent creation and management functions."""
 
-async def create_or_reuse_agent(client, agent_name, model_deployment_name, instructions, plugins=None, connections=None):
+from azure.ai.projects.models import BingGroundingTool
+
+async def create_or_reuse_agent(client, agent_name, model_deployment_name, instructions, plugins=None, 
+                              connections=None, project_client=None, bing_connection_name=None):
     """Creates a new agent or reuses an existing one with the same name.
     
     Args:
@@ -9,7 +12,9 @@ async def create_or_reuse_agent(client, agent_name, model_deployment_name, instr
         model_deployment_name: The name of the model deployment to use
         instructions: The instructions for the agent
         plugins: The plugins to attach to the agent
-        connections: Optional connections for the agent (e.g., Bing search)
+        connections: Optional connections for the agent (legacy, not used)
+        project_client: Optional AIProjectClient for creating agents with Bing grounding
+        bing_connection_name: Optional Bing connection name for grounding
         
     Returns:
         The created or reused agent
@@ -51,21 +56,11 @@ async def create_or_reuse_agent(client, agent_name, model_deployment_name, instr
         if found_agent:
             # Create agent instance from existing definition
             from semantic_kernel.agents import AzureAIAgent
-            # When reusing an existing agent, we need to check if AzureAIAgent supports connections
-            try:
-                agent = AzureAIAgent(
-                    client=client,
-                    definition=found_agent,
-                    plugins=plugins,
-                    connections=connections
-                )
-            except TypeError:
-                # If connections parameter is not supported, try without it
-                agent = AzureAIAgent(
-                    client=client,
-                    definition=found_agent,
-                    plugins=plugins
-                )
+            agent = AzureAIAgent(
+                client=client,
+                definition=found_agent,
+                plugins=plugins
+            )
             return agent
     except Exception as e:
         print(f"Error checking for existing agent: {e}")
@@ -75,45 +70,56 @@ async def create_or_reuse_agent(client, agent_name, model_deployment_name, instr
     # If no existing agent found or error occurred, create a new one
     print(f"Creating new agent: {agent_name}")
     try:
-        # Check if create_agent method supports connections parameter
-        if connections:
+        # Check if we can create agent with Bing grounding
+        if project_client and bing_connection_name and agent_name in ["POLITICAL_RISK_AGENT", "TARIFF_RISK_AGENT", "LOGISTICS_RISK_AGENT"]:
             try:
-                agent_definition = await client.agents.create_agent(
-                    model=model_deployment_name,
-                    name=agent_name,
-                    instructions=instructions,
-                    connections=connections
+                print(f"Attempting to create {agent_name} with Bing grounding...")
+                # Get Bing connection
+                bing_connection = project_client.connections.get(
+                    connection_name=bing_connection_name
                 )
-            except TypeError:
-                # If connections parameter is not supported, create without it
-                agent_definition = await client.agents.create_agent(
-                    model=model_deployment_name,
-                    name=agent_name,
-                    instructions=instructions
-                )
-        else:
-            agent_definition = await client.agents.create_agent(
-                model=model_deployment_name,
-                name=agent_name,
-                instructions=instructions
-            )
+                conn_id = bing_connection.id
+                print(f"Found Bing connection with ID: {conn_id}")
+                
+                # Initialize agent bing tool and add the connection id
+                bing = BingGroundingTool(connection_id=conn_id)
+                
+                # Create agent with the bing tool
+                with project_client:
+                    azure_agent = project_client.agents.create_agent(
+                        model=model_deployment_name,
+                        name=agent_name,
+                        instructions=instructions,
+                        tools=bing.definitions,
+                        headers={"x-ms-enable-preview": "true"}
+                    )
+                    print(f"Created agent with Bing grounding, ID: {azure_agent.id}")
+                    
+                    # Create SK Agent using the created agent definition
+                    from semantic_kernel.agents import AzureAIAgent
+                    agent = AzureAIAgent(
+                        client=client,
+                        definition=azure_agent,
+                        plugins=plugins
+                    )
+                    return agent
+            except Exception as bing_error:
+                print(f"Could not create agent with Bing grounding: {bing_error}")
+                print("Falling back to basic agent creation...")
+        
+        # If we can't create with Bing grounding or it's not a risk agent, use basic agent creation
+        agent_definition = await client.agents.create_agent(
+            model=model_deployment_name,
+            name=agent_name,
+            instructions=instructions
+        )
         
         from semantic_kernel.agents import AzureAIAgent
-        # When creating a new agent instance, check if AzureAIAgent supports connections
-        try:
-            agent = AzureAIAgent(
-                client=client,
-                definition=agent_definition,
-                plugins=plugins,
-                connections=connections
-            )
-        except TypeError:
-            # If connections parameter is not supported, create without it
-            agent = AzureAIAgent(
-                client=client,
-                definition=agent_definition,
-                plugins=plugins
-            )
+        agent = AzureAIAgent(
+            client=client,
+            definition=agent_definition,
+            plugins=plugins
+        )
         
         return agent
     except Exception as e:
