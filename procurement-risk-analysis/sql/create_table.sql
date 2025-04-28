@@ -170,6 +170,7 @@ CREATE TABLE dim_agent_thinking_log (
     agent_name VARCHAR(100) NOT NULL,
     thinking_stage VARCHAR(50) NOT NULL,
     thought_content NVARCHAR(MAX) NOT NULL,
+    thinking_stage_output NVARCHAR(MAX) NULL,
     agent_output NVARCHAR(MAX) NULL,
     conversation_id VARCHAR(100) NOT NULL,
     session_id VARCHAR(100) NULL,

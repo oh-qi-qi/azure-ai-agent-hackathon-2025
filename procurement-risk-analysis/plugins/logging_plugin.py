@@ -64,7 +64,8 @@ class LoggingPlugin:
                           conversation_id: str = None, session_id: str = None, 
                           azure_agent_id: str = None, model_deployment_name: str = None,
                           thread_id: str = None, user_query: str = None, 
-                          agent_output: str = None, status: str = "success") -> str:
+                          agent_output: str = None, thinking_stage_output: str = None,
+                          status: str = "success") -> str:
         """Logs the agent's thinking process to the database
         
         Args:
@@ -77,7 +78,8 @@ class LoggingPlugin:
             model_deployment_name: Name of the model deployment
             thread_id: ID of the Azure thread for this conversation (if available)
             user_query: The original user query that initiated this thinking process
-            agent_output: The output/response that resulted from this thinking stage
+            agent_output: The full agent response (including prefix like "POLITICAL_RISK_AGENT > ")
+            thinking_stage_output: The output of this specific thinking stage (if different from agent_output)
             status: Status of this thinking step (success, error, rate_limited, etc.)
             
         Returns:
@@ -87,20 +89,20 @@ class LoggingPlugin:
             # Generate conversation_id if not provided
             if not conversation_id:
                 conversation_id = str(uuid.uuid4())
-                
+            
             # Connect to database
             conn = pyodbc.connect(self.connection_string)
             cursor = conn.cursor()
             
-            # Execute insert query
+            # Execute insert query - NOTE: Order matches exactly with table definition
             cursor.execute("""
                 INSERT INTO dim_agent_thinking_log
-                (agent_name, thinking_stage, thought_content, agent_output, conversation_id, 
-                session_id, azure_agent_id, model_deployment_name, thread_id,
+                (agent_name, thinking_stage, thought_content, thinking_stage_output, agent_output, 
+                conversation_id, session_id, azure_agent_id, model_deployment_name, thread_id,
                 user_query, status, created_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE())
-            """, (agent_name, thinking_stage, thought_content, agent_output, conversation_id, 
-                  session_id, azure_agent_id, model_deployment_name, thread_id,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE())
+            """, (agent_name, thinking_stage, thought_content, thinking_stage_output, agent_output, 
+                  conversation_id, session_id, azure_agent_id, model_deployment_name, thread_id,
                   user_query, status))
             
             # Commit and close connection
@@ -113,6 +115,41 @@ class LoggingPlugin:
         except Exception as e:
             print(f"Error logging agent thinking: {e}")
             return json.dumps({"error": str(e)})
+    
+    @kernel_function(description="Log the complete agent response")
+    def log_agent_response(self, agent_name: str, response_content: str, 
+                           conversation_id: str = None, session_id: str = None,
+                           azure_agent_id: str = None, model_deployment_name: str = None,
+                           thread_id: str = None, user_query: str = None) -> str:
+        """Logs a complete agent response to facilitate debugging
+        
+        Args:
+            agent_name: Name of the agent (e.g., POLITICAL_RISK_AGENT)
+            response_content: The full agent response including prefix
+            conversation_id: Unique ID for this conversation
+            session_id: ID of the current chat session
+            azure_agent_id: ID of the Azure AI agent
+            model_deployment_name: Name of the model deployment
+            thread_id: ID of the Azure thread for this conversation
+            user_query: The original user query that prompted this response
+            
+        Returns:
+            JSON string with the result of the logging operation
+        """
+        # Use log_agent_thinking with specific thinking_stage for responses
+        return self.log_agent_thinking(
+            agent_name=agent_name,
+            thinking_stage="complete_response",
+            thought_content=f"Complete response from {agent_name}",
+            conversation_id=conversation_id,
+            session_id=session_id,
+            azure_agent_id=azure_agent_id,
+            model_deployment_name=model_deployment_name,
+            thread_id=thread_id,
+            user_query=user_query,
+            agent_output=response_content,  # Store full response in agent_output
+            thinking_stage_output=response_content  # Also store in thinking_stage_output
+        )
     
     @kernel_function(description="Logs an agent event for observability")
     def log_agent_event(self, agent_name: str, action: str, result_summary: str = None, 
@@ -224,10 +261,11 @@ class LoggingPlugin:
             if where_clauses:
                 where_clause = "WHERE " + " AND ".join(where_clauses)
             
-            # Execute query
+            # Execute query with column order matching the table definition
             query = f"""
                 SELECT TOP {limit} 
-                    thinking_id, agent_name, thinking_stage, thought_content, agent_output,
+                    thinking_id, agent_name, thinking_stage, thought_content, 
+                    thinking_stage_output, agent_output,
                     conversation_id, session_id, azure_agent_id, model_deployment_name, 
                     thread_id, user_query, status, created_date
                 FROM dim_agent_thinking_log
