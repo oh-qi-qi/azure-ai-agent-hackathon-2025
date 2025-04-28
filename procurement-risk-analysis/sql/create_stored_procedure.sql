@@ -97,72 +97,63 @@ BEGIN
 END;
 GO
 
--- Create or alter the second stored procedure
-CREATE OR ALTER PROCEDURE sp_LogScheduleVariance
-    @project_id INT,
-    @equipment_id INT,
-    @work_package_id INT,
-    @milestone_id INT,
-    @p6_due_date DATE,
-    @equipment_delivery_date DATE,
-    @days_variance INT,
-    @risk_flag VARCHAR(20),
-    @risk_description VARCHAR(500),
-    @mitigation_action VARCHAR(500),
+-- create_report_procedures.sql
+CREATE PROCEDURE sp_LogRiskReport
+    @session_id VARCHAR(100),
     @conversation_id UNIQUEIDENTIFIER,
-    @variance_id INT OUTPUT
+    @filename VARCHAR(255),
+    @blob_url VARCHAR(1000),
+    @report_type VARCHAR(50) = 'comprehensive'
 AS
 BEGIN
     SET NOCOUNT ON;
     
-    -- Insert into fact_schedule_variance table
-    INSERT INTO fact_schedule_variance (
-        project_id, 
-        equipment_id, 
-        work_package_id, 
-        milestone_id,
-        p6_due_date, 
-        equipment_delivery_date, 
-        days_variance,
-        risk_flag, 
-        risk_description, 
-        mitigation_action, 
-        conversation_id
+    INSERT INTO fact_risk_report (
+        session_id, 
+        conversation_id, 
+        filename,
+        blob_url,
+        report_type
     )
     VALUES (
-        @project_id,
-        @equipment_id,
-        @work_package_id,
-        @milestone_id,
-        @p6_due_date,
-        @equipment_delivery_date,
-        @days_variance,
-        @risk_flag,
-        @risk_description,
-        @mitigation_action,
-        @conversation_id
+        @session_id,
+        @conversation_id,
+        @filename,
+        @blob_url,
+        @report_type
     );
     
-    -- Get the new variance_id
-    SET @variance_id = SCOPE_IDENTITY();
-    
-    RETURN @variance_id;
+    SELECT SCOPE_IDENTITY() as report_id;
 END;
 GO
 
--- Create or alter the third stored procedure
-CREATE PROCEDURE sp_LogAgentEvent
+CREATE PROCEDURE sp_GetReports
+    @session_id VARCHAR(100) = NULL,
+    @conversation_id UNIQUEIDENTIFIER = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    SELECT *
+    FROM fact_risk_report
+    WHERE (@session_id IS NULL OR session_id = @session_id)
+      AND (@conversation_id IS NULL OR conversation_id = @conversation_id)
+    ORDER BY created_date DESC;
+END;
+GO
+
+CREATE OR ALTER PROCEDURE sp_LogAgentEvent
     @agent_name VARCHAR(100),
     @action VARCHAR(100),
     @result_summary VARCHAR(1000) = NULL,
     @conversation_id UNIQUEIDENTIFIER,
+    @session_id VARCHAR(100) = NULL,
     @user_query NVARCHAR(MAX) = NULL,
     @agent_output NVARCHAR(MAX) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
     
-    -- Insert into dim_agent_event_log table
     INSERT INTO dim_agent_event_log (
         event_id,
         agent_name,
@@ -171,7 +162,8 @@ BEGIN
         result_summary,
         user_query,
         agent_output,
-        conversation_id
+        conversation_id,
+        session_id
     )
     VALUES (
         NEWID(),
@@ -181,6 +173,8 @@ BEGIN
         @result_summary,
         @user_query,
         @agent_output,
-        @conversation_id
+        @conversation_id,
+        @session_id
     );
 END;
+GO

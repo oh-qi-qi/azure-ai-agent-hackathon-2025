@@ -10,3 +10,5 @@ azure-ai-projects==1.0.0b10
 streamlit>=1.28.0
 requests>=2.31.0
 plotly>=5.13.0
+reportlab>=4.0.0
+azure-storage-blob>=12.19.0

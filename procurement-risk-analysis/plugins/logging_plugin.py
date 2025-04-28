@@ -116,21 +116,9 @@ class LoggingPlugin:
     
     @kernel_function(description="Logs an agent event for observability")
     def log_agent_event(self, agent_name: str, action: str, result_summary: str = None, 
-                       conversation_id: str = None, user_query: str = None, 
-                       agent_output: str = None) -> str:
-        """Logs an agent event to the database
-        
-        Args:
-            agent_name: Name of the agent (e.g., SCHEDULER_AGENT)
-            action: Action being performed (e.g., User Query, Schedule Analysis)
-            result_summary: Brief summary of the result
-            conversation_id: Unique ID for this conversation
-            user_query: The user's question or prompt
-            agent_output: The agent's response or output
-            
-        Returns:
-            JSON string with result information
-        """
+                    conversation_id: str = None, session_id: str = None,
+                    user_query: str = None, agent_output: str = None) -> str:
+        """Logs an agent event to the database."""
         try:
             # Connect to database
             conn = pyodbc.connect(self.connection_string)
@@ -141,10 +129,11 @@ class LoggingPlugin:
                 conversation_id = str(uuid.uuid4())
             
             # Prepare parameters for stored procedure
-            params = (agent_name, action, result_summary, conversation_id, user_query, agent_output)
+            params = (agent_name, action, result_summary, conversation_id, 
+                    session_id, user_query, agent_output)
             
             # Execute stored procedure
-            cursor.execute("EXEC sp_LogAgentEvent ?, ?, ?, ?, ?, ?", params)
+            cursor.execute("EXEC sp_LogAgentEvent ?, ?, ?, ?, ?, ?, ?", params)
             
             # Commit and close connection
             conn.commit()

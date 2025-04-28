@@ -210,6 +210,7 @@ CREATE TABLE dim_agent_event_log (
     user_query NVARCHAR(MAX) NULL,
     agent_output NVARCHAR(MAX) NULL,
     conversation_id UNIQUEIDENTIFIER NOT NULL,
+    session_id VARCHAR(100) NULL,
     created_date DATETIME DEFAULT GETDATE()
 );
 
@@ -227,5 +228,16 @@ CREATE TABLE dim_agent_thinking_log (
     thread_id VARCHAR(100) NULL,
     user_query NVARCHAR(MAX) NULL,
     status VARCHAR(50) DEFAULT 'success',
+    created_date DATETIME DEFAULT GETDATE()
+);
+
+-- create_report_tracking_table.sql
+CREATE TABLE fact_risk_report (
+    report_id INT IDENTITY(1,1) PRIMARY KEY,
+    session_id VARCHAR(100) NOT NULL,
+    conversation_id UNIQUEIDENTIFIER NOT NULL,
+    filename VARCHAR(255) NOT NULL,
+    blob_url VARCHAR(1000) NOT NULL,
+    report_type VARCHAR(50) DEFAULT 'comprehensive',
     created_date DATETIME DEFAULT GETDATE()
 );

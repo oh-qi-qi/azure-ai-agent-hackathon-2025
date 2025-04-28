@@ -393,6 +393,7 @@ class ChatbotManager:
                     action="User Query",
                     result_summary=f"Processing user query: {message}",
                     conversation_id=conversation_id,
+                    session_id=session_id,
                     user_query=message
                 )
             except Exception as e:
@@ -422,6 +423,10 @@ class ChatbotManager:
                 - conversation_id: "{conversation_id}"
                 - session_id: "{session_id}"
                 - model_deployment_name: "{model_deployment_name}"
+                
+                When saving reports, use these parameters:
+                - session_id: "{session_id}"
+                - conversation_id: "{conversation_id}"
                 """
             )
             
@@ -641,6 +646,7 @@ class ChatbotManager:
                                     action="Report Generation Assistance",
                                     result_summary="Generated report from scheduler output due to reporting agent communication issues",
                                     conversation_id=conversation_id,
+                                    session_id=session_id,
                                     user_query=message,
                                     agent_output=report
                                 )
@@ -748,6 +754,7 @@ class ChatbotManager:
                     action="Assistant Response",
                     result_summary="Generated combined response to user query",
                     conversation_id=conversation_id,
+                    session_id=session_id,
                     user_query=message,
                     agent_output=final_response
                 )
@@ -772,6 +779,7 @@ class ChatbotManager:
                     action="Message Error",
                     result_summary=f"Error processing message: {str(e)}",
                     conversation_id=conversation_id if 'conversation_id' in locals() else None,
+                    session_id=session_id,
                     user_query=message
                 )
             except Exception as log_error:

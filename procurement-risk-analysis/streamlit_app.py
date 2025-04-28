@@ -13,6 +13,8 @@ import dotenv
 import pyodbc
 import sys
 import importlib.util
+import re
+from plugins.report_file_plugin import ReportFilePlugin
 
 # Load environment variables
 dotenv.load_dotenv()
@@ -308,6 +310,10 @@ def process_message():
         assistant_message = response.get("response", "No response")
         # Add assistant message to chat history
         st.session_state.chat_history.append({"role": "assistant", "content": assistant_message})
+        
+        # Store conversation_id in session state if available
+        if response.get("conversation_id"):
+            st.session_state.conversation_id = response["conversation_id"]
     else:
         error_message = response.get('error', 'Unknown error')
         st.error(f"Error: {error_message}")
@@ -357,7 +363,7 @@ with st.sidebar:
     st.caption("Reset Chat Session will create a new session ID and clean up resources.")
 
 # Create tabs for different functionalities
-tab1, tab2, tab3, tab4 = st.tabs(["Chat", "Schedule Analysis", "System Status", "Thinking Logs"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Chat", "Schedule Analysis", "System Status", "Thinking Logs", "Reports"])
 
 # Tab 1: Chat Interface
 with tab1:
@@ -368,7 +374,38 @@ with tab1:
         if message["role"] == "user":
             st.markdown(f"**You:** {message['content']}")
         else:
-            st.markdown(f"**Assistant:** {message['content']}")
+            assistant_content = message['content']
+            
+            # Check if the response contains report file information
+            if "📄 Report Generated Successfully" in assistant_content:
+                # Split the content to extract file information
+                parts = assistant_content.split("📄 Report Generated Successfully")
+                
+                # Display the report content first
+                st.markdown(f"**Assistant:** {parts[0]}")
+                
+                # Extract and display file information
+                if len(parts) > 1:
+                    file_info = parts[1].strip()
+                    
+                    # Extract the URL from the file information
+                    url_match = re.search(r'Download URL: (.+)', file_info)
+                    filename_match = re.search(r'Filename: (.+)', file_info)
+                    
+                    if url_match and filename_match:
+                        url = url_match.group(1).strip()
+                        filename = filename_match.group(1).strip()
+                        
+                        # Create a more visible download section
+                        st.info("📄 Report Generated Successfully")
+                        st.markdown(f"**Filename:** {filename}")
+                        st.markdown(f"[🔗 Download Report]({url})")
+                    else:
+                        # Fallback to showing the raw file info
+                        st.info(file_info)
+            else:
+                # Regular message display
+                st.markdown(f"**Assistant:** {assistant_content}")
     
     # Input for new message with on_change callback
     user_message = st.text_input("Type your message here:", key="user_message", on_change=process_message)
@@ -597,6 +634,105 @@ with tab4:
                     
             except Exception as e:
                 st.error(f"Error retrieving logs: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc())
+
+# Tab 5: Reports
+with tab5:
+    st.header("Report Management")
+    
+    # Show current session and conversation ID
+    st.subheader("Current Session")
+    st.text(f"Session ID: {st.session_state.session_id}")
+    if st.session_state.get('conversation_id'):
+        st.text(f"Conversation ID: {st.session_state.conversation_id}")
+    
+    st.divider()
+    
+    # Generate report from current conversation
+    st.subheader("Generate Report")
+    if st.button("Generate Report from Current Conversation"):
+        if st.session_state.chat_history:
+            with st.spinner("Generating report..."):
+                try:
+                    connection_string = os.getenv("DB_CONNECTION_STRING")
+                    report_plugin = ReportFilePlugin(connection_string)
+                    
+                    # Generate report
+                    result = report_plugin.generate_report_from_conversation(
+                        conversation_id=st.session_state.get('conversation_id', str(uuid.uuid4())),
+                        session_id=st.session_state.session_id
+                    )
+                    
+                    result_data = json.loads(result)
+                    if result_data.get("success"):
+                        st.success("Report generated successfully!")
+                        st.json({
+                            "Filename": result_data["filename"],
+                            "Download URL": result_data["blob_url"]
+                        })
+                    else:
+                        st.error(f"Failed to generate report: {result_data.get('error')}")
+                except Exception as e:
+                    st.error(f"Error generating report: {str(e)}")
+        else:
+            st.warning("No conversation history to generate report from.")
+    
+    st.divider()
+    
+    # View existing reports
+    st.subheader("View Reports")
+    
+    # Filter options
+    col1, col2 = st.columns(2)
+    with col1:
+        filter_session_id = st.text_input("Filter by Session ID (optional)")
+    with col2:
+        filter_conversation_id = st.text_input("Filter by Conversation ID (optional)")
+    
+    if st.button("Search Reports"):
+        with st.spinner("Fetching reports..."):
+            try:
+                connection_string = os.getenv("DB_CONNECTION_STRING")
+                report_plugin = ReportFilePlugin(connection_string)
+                
+                # Get reports
+                reports_json = report_plugin.get_reports(
+                    session_id=filter_session_id if filter_session_id else None,
+                    conversation_id=filter_conversation_id if filter_conversation_id else None
+                )
+                
+                reports = json.loads(reports_json)
+                
+                if isinstance(reports, dict) and "error" in reports:
+                    st.error(f"Error retrieving reports: {reports['error']}")
+                elif reports:
+                    # Display reports in a table
+                    st.write(f"Found {len(reports)} reports")
+                    
+                    # Convert to DataFrame for display
+                    df = pd.DataFrame(reports)
+                    
+                    # Add download buttons for each report
+                    for index, row in df.iterrows():
+                        col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+                        with col1:
+                            st.write(f"**{row['filename']}**")
+                        with col2:
+                            st.write(f"Created: {row['created_date']}")
+                        with col3:
+                            st.write(f"Type: {row['report_type']}")
+                        with col4:
+                            st.markdown(f"[Download]({row['blob_url']})")
+                    
+                    # Show full data table
+                    st.subheader("Report Details")
+                    st.dataframe(df)
+                else:
+                    st.info("No reports found")
+                    
+            except Exception as e:
+                st.error(f"Error fetching reports: {str(e)}")
                 import traceback
                 st.code(traceback.format_exc())
 
