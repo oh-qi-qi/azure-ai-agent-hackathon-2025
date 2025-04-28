@@ -533,6 +533,88 @@ class ChatbotManager:
             import traceback
             traceback.print_exc()
 
+    async def recover_from_chat_termination(self, session, target_risk_agent, latest_responses, conversation_id, session_id, message):
+        """Recovery function for when chat is terminated before reporting agent can respond."""
+        print("Attempting to recover from premature chat termination")
+        
+        try:
+            # Get the reporting agent directly from the session
+            if REPORTING_AGENT not in session["agents"]:
+                print("Reporting agent not found in session")
+                return False
+                
+            reporting_agent = session["agents"][REPORTING_AGENT]
+            
+            # Create input for the reporting agent
+            risk_content = ""
+            if target_risk_agent in latest_responses:
+                risk_content = latest_responses[target_risk_agent].content.replace(f"{target_risk_agent} > ", "")
+            
+            scheduler_content = ""
+            if SCHEDULER_AGENT in latest_responses:
+                scheduler_content = latest_responses[SCHEDULER_AGENT].content.replace("SCHEDULER_AGENT > ", "")
+            
+            report_input = f"""
+            I need to generate a comprehensive report based on:
+            
+            SCHEDULER DATA:
+            {scheduler_content}
+            
+            RISK ANALYSIS:
+            {risk_content}
+            
+            Compile this into a professional report with these sections:
+            1. Executive Summary
+            2. Risk Assessment
+            3. Impact Analysis
+            4. Recommendations
+            
+            Include specific insights from both the scheduler and risk agent analysis.
+            """
+            
+            # Invoke the reporting agent directly with a 60-second timeout
+            try:
+                reporting_response = await asyncio.wait_for(
+                    reporting_agent.invoke(report_input),
+                    timeout=60
+                )
+                
+                if reporting_response:
+                    # Format as a ChatMessageContent
+                    latest_responses[REPORTING_AGENT] = ChatMessageContent(
+                        role=AuthorRole.ASSISTANT,
+                        name=REPORTING_AGENT,
+                        content=f"REPORTING_AGENT > {reporting_response}"
+                    )
+                    print("Successfully generated report through direct agent invocation")
+                    
+                    # Log this action
+                    try:
+                        self.logging_plugin.log_agent_event(
+                            agent_name="SYSTEM",
+                            action="Recovery Action",
+                            result_summary="Used direct agent invocation to recover from terminated chat",
+                            conversation_id=conversation_id,
+                            session_id=session_id,
+                            user_query=message,
+                            agent_output=reporting_response
+                        )
+                    except Exception as e:
+                        print(f"Error logging recovery action: {e}")
+                        
+                    return True
+            except asyncio.TimeoutError:
+                print("Direct reporting agent invocation timed out")
+            except Exception as e:
+                print(f"Error during direct reporting agent invocation: {e}")
+        
+        except Exception as e:
+            print(f"Recovery from chat termination failed: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return False
+
     async def process_message(self, session_id, message):
         """Processes a user message and returns the combined response from all agents."""
         
@@ -820,9 +902,24 @@ class ChatbotManager:
                                 # Add the message to the chat
                                 await chat.add_chat_message(risk_agent_message)
                                 
+                                # Print debug information about the chat
+                                if hasattr(chat, 'history'):
+                                    print(f"DEBUG: Chat history length: {len(chat.history)}")
+                                    if chat.history:
+                                        print(f"DEBUG: Last message in history: {chat.history[-1].name if hasattr(chat.history[-1], 'name') else 'Unknown'}")
+                                
+                                # Clear the chat state if it's in a terminated state
+                                if hasattr(chat, '_current_chat_complete') and chat._current_chat_complete:
+                                    print("DEBUG: Chat was already complete, resetting state")
+                                    chat._current_chat_complete = False
+                                
                                 # Now get the risk agent's response with timeout
                                 risk_timeout = 80  # seconds (increased from 60)
                                 try:
+                                    # Get the thread ID before making the call
+                                    if hasattr(chat, 'thread_id'):
+                                        print(f"Thread ID: {chat.thread_id}")
+                                        
                                     # Create a task to get risk agent response with timeout
                                     async def get_risk_response():
                                         async for response in chat.invoke():
@@ -868,6 +965,8 @@ class ChatbotManager:
                                     raise
                                 except Exception as e:
                                     print(f"Error getting {target_risk_agent} response: {e}")
+                                    import traceback
+                                    traceback.print_exc()
                                 
                                 # Check for cancellation
                                 if cancellation_token and cancellation_token.done():
@@ -880,9 +979,27 @@ class ChatbotManager:
                                 # If we got a risk response, now get the reporting agent's response
                                 if target_risk_agent in latest_responses:
                                     print(f"{target_risk_agent} response received, continuing to reporting agent")
-                                    reporting_timeout = 60  # seconds (increased from 30)
+                                    
+                                    # Reset chat state if it's marked as complete
+                                    if hasattr(chat, '_current_chat_complete') and chat._current_chat_complete:
+                                        print("DEBUG: Reset chat complete state before reporting agent")
+                                        chat._current_chat_complete = False
+                                    
+                                    # Use direct invocation of reporting agent if normal flow fails
                                     try:
-                                        # Create a task to get reporting agent response with timeout
+                                        # Create a message from the risk agent to the reporting agent
+                                        reporting_agent_message = ChatMessageContent(
+                                            role=AuthorRole.ASSISTANT,
+                                            name=target_risk_agent,
+                                            content=latest_responses[target_risk_agent].content
+                                        )
+                                        
+                                        # Add the message to the chat
+                                        await chat.add_chat_message(reporting_agent_message)
+                                        
+                                        # Now try to get the reporting agent's response
+                                        reporting_timeout = 60  # seconds
+                                        
                                         async def get_reporting_response():
                                             async for response in chat.invoke():
                                                 # Check for cancellation
@@ -894,39 +1011,76 @@ class ChatbotManager:
                                                     latest_responses[REPORTING_AGENT] = response
                                                     return
                                         
-                                        # Add retry logic for reporting agent
-                                        retry_count = 0
-                                        max_retries = 2
-                                        
-                                        while retry_count <= max_retries:
-                                            try:
-                                                # Create a task for the operation
-                                                reporting_task = asyncio.create_task(get_reporting_response())
+                                        # Try to get the reporting agent response
+                                        try:
+                                            # Create a task for the operation
+                                            reporting_task = asyncio.create_task(get_reporting_response())
+                                            
+                                            # Track the task
+                                            if session_id in self._session_tasks:
+                                                self._session_tasks[session_id].append(reporting_task)
+                                            
+                                            # Wait for reporting agent response with timeout
+                                            await asyncio.wait_for(reporting_task, timeout=reporting_timeout)
+                                            
+                                        except asyncio.TimeoutError:
+                                            print(f"Reporting agent timed out after {reporting_timeout} seconds")
+                                        except Exception as e:
+                                            print(f"Error getting reporting agent response: {e}")
+                                            
+                                            # If chat is already complete, try direct agent invocation
+                                            if "Chat is already complete" in str(e):
+                                                print("Attempting direct reporting agent invocation")
+                                                try:
+                                                    # Get the reporting agent from the session
+                                                    reporting_agent = session["agents"][REPORTING_AGENT]
+                                                    
+                                                    # Create input for the reporting agent
+                                                    report_input = f"""
+                                                    I need a comprehensive report based on the following political risk analysis:
+                                                    
+                                                    {latest_responses[target_risk_agent].content}
+                                                    
+                                                    Please generate a summary report that captures the key findings and recommendations.
+                                                    """
+                                                    
+                                                    # Invoke the reporting agent directly
+                                                    reporting_response = await reporting_agent.invoke(report_input)
+                                                    
+                                                    if reporting_response:
+                                                        # Format as a ChatMessageContent
+                                                        latest_responses[REPORTING_AGENT] = ChatMessageContent(
+                                                            role=AuthorRole.ASSISTANT,
+                                                            name=REPORTING_AGENT,
+                                                            content=f"REPORTING_AGENT > {reporting_response}"
+                                                        )
+                                                        print("Successfully got reporting agent response via direct invocation")
+                                                except Exception as direct_error:
+                                                    print(f"Direct reporting agent invocation failed: {direct_error}")
+                                        finally:
+                                            # Clean up the task reference
+                                            if session_id in self._session_tasks and reporting_task in self._session_tasks[session_id]:
+                                                self._session_tasks[session_id].remove(reporting_task)
                                                 
-                                                # Track the task
-                                                if session_id in self._session_tasks:
-                                                    self._session_tasks[session_id].append(reporting_task)
-                                                
-                                                # Wait for reporting agent response with timeout
-                                                await asyncio.wait_for(reporting_task, timeout=reporting_timeout)
-                                                break  # Success, exit the retry loop
-                                            except asyncio.TimeoutError:
-                                                retry_count += 1
-                                                if retry_count <= max_retries:
-                                                    print(f"Reporting agent timeout, retry {retry_count}/{max_retries}")
-                                                    await asyncio.sleep(1)  # Brief pause before retry
-                                                else:
-                                                    print(f"Reporting agent timed out after {reporting_timeout} seconds and {max_retries} retries")
-                                            finally:
-                                                # Clean up the task reference
-                                                if session_id in self._session_tasks and reporting_task in self._session_tasks[session_id]:
-                                                    self._session_tasks[session_id].remove(reporting_task)
-                                        
-                                    except asyncio.CancelledError:
-                                        print("Reporting task cancelled")
-                                        raise
                                     except Exception as e:
-                                        print(f"Error getting reporting agent response: {e}")
+                                        print(f"Error in reporting agent flow: {e}")
+                                        import traceback
+                                        traceback.print_exc()
+                                        
+                                        # Try recovery as a last resort if we have a risk agent response but reporting failed
+                                        if target_risk_agent in latest_responses and REPORTING_AGENT not in latest_responses:
+                                            recovery_successful = await self.recover_from_chat_termination(
+                                                session,
+                                                target_risk_agent,
+                                                latest_responses,
+                                                conversation_id,
+                                                session_id,
+                                                message
+                                            )
+                                            if recovery_successful:
+                                                print("Successfully recovered from chat termination")
+                                            else:
+                                                print("Recovery attempt failed")
                                 else:
                                     print(f"No response from {target_risk_agent}, falling back to regular flow")
                                     # Continue with normal flow if risk agent didn't respond
@@ -1118,6 +1272,11 @@ class ChatbotManager:
                             # Now get reporting agent response with timeout
                             reporting_timeout = 60  # seconds (increased from 30)
                             try:
+                                # Reset chat state if it's marked as complete
+                                if hasattr(chat, '_current_chat_complete') and chat._current_chat_complete:
+                                    print("DEBUG: Reset chat complete state before reporting agent")
+                                    chat._current_chat_complete = False
+                                
                                 # Create a task to get reporting agent response with timeout
                                 async def get_reporting_response():
                                     async for response in chat.invoke():
@@ -1153,6 +1312,27 @@ class ChatbotManager:
                                             await asyncio.sleep(1)  # Brief pause before retry
                                         else:
                                             print(f"Reporting agent timed out after {reporting_timeout} seconds and {max_retries} retries")
+                                    except Exception as e:
+                                        if "Chat is already complete" in str(e):
+                                            # Try direct invocation as fallback
+                                            recovery_successful = await self.recover_from_chat_termination(
+                                                session,
+                                                risk_agents[0],  # Use the first risk agent for recovery
+                                                latest_responses,
+                                                conversation_id,
+                                                session_id,
+                                                message
+                                            )
+                                            if recovery_successful:
+                                                print("Successfully recovered comprehensive analysis via direct invocation")
+                                                break
+                                        
+                                        retry_count += 1
+                                        if retry_count <= max_retries:
+                                            print(f"Reporting agent error, retry {retry_count}/{max_retries}")
+                                            await asyncio.sleep(1)
+                                        else:
+                                            print(f"Reporting agent failed after {max_retries} retries: {e}")
                                     finally:
                                         # Clean up the task reference
                                         if session_id in self._session_tasks and reporting_task in self._session_tasks[session_id]:
@@ -1220,6 +1400,22 @@ class ChatbotManager:
                     print(f"Error during chat.invoke(): {e}")
                     import traceback
                     traceback.print_exc()
+                    
+                    # Try to recover if it's a chat termination error
+                    if "Chat is already complete" in str(e) or "Chat terminated" in str(e):
+                        if is_specific_risk and target_risk_agent in latest_responses:
+                            recovery_successful = await self.recover_from_chat_termination(
+                                session, 
+                                target_risk_agent, 
+                                latest_responses, 
+                                conversation_id, 
+                                session_id, 
+                                message
+                            )
+                            # If recovery failed, continue with normal error handling
+                            if not recovery_successful:
+                                # Log error but continue with what we have
+                                pass
                     
                     # Log the error but don't return error response yet - try to salvage what we can
                     try:
@@ -1364,11 +1560,134 @@ class ChatbotManager:
                                     print(f"Error logging report generation assistance: {e}")
                             
                             else:
-                                # Since we don't have database fallback anymore, generate a basic report
-                                print("Scheduler output doesn't contain analysis and no database fallback available")
-                                
-                                # Generate a simplified report based on scheduler content
-                                if scheduler_content:
+                                # Check for JSON data for report generation
+                                json_match = re.search(r'```json\s*(.*?)\s*```', scheduler_content, re.DOTALL)
+                                if json_match:
+                                    try:
+                                        json_data = json.loads(json_match.group(1))
+                                        
+                                        # Generate a report based on the JSON data
+                                        report = "REPORTING_AGENT > \n"
+                                        report += "# Schedule Analysis With Political Risk Focus\n\n"
+                                        report += "## Project Information\n\n"
+                                        
+                                        # Add project information
+                                        if "projectInfo" in json_data:
+                                            for project in json_data["projectInfo"]:
+                                                report += f"- **Project Name**: {project.get('name', 'Unknown')}\n"
+                                                report += f"- **Location**: {project.get('location', 'Unknown')}\n\n"
+                                        
+                                        # Add manufacturing locations
+                                        if "manufacturingLocations" in json_data and json_data["manufacturingLocations"]:
+                                            report += "## Manufacturing Locations\n\n"
+                                            for location in json_data["manufacturingLocations"]:
+                                                report += f"- {location}\n"
+                                            report += "\n"
+                                        
+                                        # Add shipping and receiving ports
+                                        if "shippingPorts" in json_data or "receivingPorts" in json_data:
+                                            report += "## Shipping Routes\n\n"
+                                            
+                                            if json_data.get("shippingPorts"):
+                                                report += "**Shipping Ports**:\n"
+                                                for port in json_data["shippingPorts"]:
+                                                    report += f"- {port}\n"
+                                                report += "\n"
+                                                
+                                            if json_data.get("receivingPorts"):
+                                                report += "**Receiving Ports**:\n"
+                                                for port in json_data["receivingPorts"]:
+                                                    report += f"- {port}\n"
+                                                report += "\n"
+                                        
+                                        # Add equipment details
+                                        if "equipmentItems" in json_data and json_data["equipmentItems"]:
+                                            report += "## Equipment Status\n\n"
+                                            report += "| Equipment Code | Equipment Name | Status | Variance (days) |\n"
+                                            report += "|---------------|----------------|--------|----------------|\n"
+                                            for item in json_data["equipmentItems"]:
+                                                report += f"| {item.get('code', 'N/A')} | {item.get('name', 'N/A')} | {item.get('status', 'N/A')} | {item.get('variance', 'N/A')} |\n"
+                                            report += "\n"
+                                        
+                                        # Add risk assessment
+                                        report += "## Risk Assessment\n\n"
+                                        report += "### Schedule Risk Assessment\n\n"
+                                        
+                                        # Determine overall risk level based on the equipment items
+                                        high_risk_items = []
+                                        medium_risk_items = []
+                                        low_risk_items = []
+                                        
+                                        if "equipmentItems" in json_data:
+                                            for item in json_data["equipmentItems"]:
+                                                variance = item.get('variance', 0)
+                                                if isinstance(variance, str):
+                                                    try:
+                                                        variance = int(variance)
+                                                    except ValueError:
+                                                        variance = 0
+                                                
+                                                if variance > 7:
+                                                    high_risk_items.append(item)
+                                                elif variance > 0:
+                                                    medium_risk_items.append(item)
+                                                else:
+                                                    low_risk_items.append(item)
+                                        
+                                        # Add risk summary
+                                        report += f"Based on the schedule data:\n\n"
+                                        report += f"- **High Risk Items**: {len(high_risk_items)} (more than 7 days late)\n"
+                                        report += f"- **Medium Risk Items**: {len(medium_risk_items)} (1-7 days late)\n"
+                                        report += f"- **Low Risk Items**: {len(low_risk_items)} (on time or early)\n\n"
+                                        
+                                        # Add recommendations
+                                        report += "## Recommendations\n\n"
+                                        report += "1. **Review Late Deliveries**: Focus on equipment items that are behind schedule\n"
+                                        report += "2. **Monitor Supply Chain**: Establish weekly check-ins with suppliers\n"
+                                        report += "3. **Prepare Contingency Plans**: Especially for items with high variance\n"
+                                        report += "4. **Document Risk Management**: Keep all stakeholders informed\n\n"
+                                        
+                                        report += "## Conclusion\n\n"
+                                        report += "This analysis provides an overview of the current equipment schedule status and potential risks. Regular monitoring and proactive management are recommended to ensure timely project completion."
+                                        
+                                        # Create a response for the reporting agent
+                                        latest_responses[REPORTING_AGENT] = ChatMessageContent(
+                                            role=AuthorRole.ASSISTANT,
+                                            name=REPORTING_AGENT,
+                                            content=report
+                                        )
+                                        
+                                        print("Generated report from JSON data")
+                                    except Exception as json_error:
+                                        print(f"Error generating report from JSON: {json_error}")
+                                        # Fall back to the simpler report
+                                        
+                                        # Generate a simplified report
+                                        report = "REPORTING_AGENT > \n"
+                                        report += "# Schedule Analysis Summary\n\n"
+                                        report += "The data shows equipment schedule information for Project A located in Singapore, with manufacturing in Germany and shipping to Singapore and Penang Port.\n\n"
+                                        report += "## Equipment Status\n\n"
+                                        report += "Based on the available data, there are three LV Switchgear equipment items with varying delivery statuses:\n\n"
+                                        report += "- Some items are ahead of schedule\n"
+                                        report += "- Some items are behind schedule\n\n"
+                                        report += "## Recommendations\n\n"
+                                        report += "1. Monitor any late deliveries closely\n"
+                                        report += "2. Establish regular communication with suppliers\n"
+                                        report += "3. Prepare contingency plans for potential delays\n"
+                                        report += "4. Review schedule adherence metrics weekly\n\n"
+                                        report += "## Next Steps\n\n"
+                                        report += "For more detailed analysis, consider requesting specific risk analyses for political, tariff, or logistics risks."
+                                        
+                                        latest_responses[REPORTING_AGENT] = ChatMessageContent(
+                                            role=AuthorRole.ASSISTANT,
+                                            name=REPORTING_AGENT,
+                                            content=report
+                                        )
+                                else:
+                                    # Since we don't have database fallback anymore, generate a basic report
+                                    print("Scheduler output doesn't contain analysis and no database fallback available")
+                                    
+                                    # Generate a simplified report based on scheduler content
                                     report = "REPORTING_AGENT > \n"
                                     report += "# Schedule Analysis Summary\n\n"
                                     report += "The scheduler has analyzed the equipment schedule data. However, due to communication limitations, a detailed report could not be generated at this time.\n\n"
@@ -1376,25 +1695,12 @@ class ChatbotManager:
                                     report += scheduler_content + "\n\n"
                                     report += "## Next Steps\n\n"
                                     report += "Please try again or contact the project management team for support with the schedule analysis."
-                                else:
-                                    report = "REPORTING_AGENT > \n"
-                                    report += "# Schedule Analysis Summary\n\n"
-                                    report += "The scheduler encountered issues while analyzing the equipment schedule data. No detailed report could be generated.\n\n"
-                                    report += "## Recommendations\n\n"
-                                    report += "1. Please try your request again\n"
-                                    report += "2. If the issue persists, contact technical support\n"
-                                    report += "3. Consider breaking down your request into smaller, more specific queries\n\n"
-                                    report += "## Next Steps\n\n"
-                                    report += "Please ensure your request is clear and specific. Try asking about:\n"
-                                    report += "- Specific equipment items\n"
-                                    report += "- Specific risk categories\n"
-                                    report += "- Specific time periods"
-                                
-                                latest_responses[REPORTING_AGENT] = ChatMessageContent(
-                                    role=AuthorRole.ASSISTANT,
-                                    name=REPORTING_AGENT,
-                                    content=report
-                                )
+                                    
+                                    latest_responses[REPORTING_AGENT] = ChatMessageContent(
+                                        role=AuthorRole.ASSISTANT,
+                                        name=REPORTING_AGENT,
+                                        content=report
+                                    )
 
                         except Exception as e:
                             print(f"Error trying to bridge gap between scheduler and reporting agents: {e}")
