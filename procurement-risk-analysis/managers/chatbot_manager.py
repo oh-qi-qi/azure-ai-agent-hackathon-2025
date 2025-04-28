@@ -579,32 +579,24 @@ class ChatbotManager:
                                     report_sections[current_section] += line + "\n"
                             
                             # Create a formatted report
-                            report = """REPORTING_AGENT > 
-                                # Equipment Schedule Risk Report
-
-                                """
+                            report = "REPORTING_AGENT > \n"
+                            report += "# Equipment Schedule Risk Report\n\n"
                             
                             # Add executive summary
                             if report_sections["executive_summary"].strip():
-                                report += f"""## Executive Summary
-                                    {report_sections["executive_summary"]}
-
-                                    """
+                                report += "## Executive Summary\n"
+                                report += report_sections["executive_summary"].strip() + "\n\n"
                             
                             # Add risk items
                             for risk_level in ["high_risk", "medium_risk", "low_risk"]:
                                 if report_sections[risk_level].strip():
                                     level_name = risk_level.replace("_", " ").title()
-                                    report += f"""## {level_name} Items
-                                    {report_sections[risk_level]}
-
-                                    """
+                                    report += f"## {level_name} Items\n"
+                                    report += report_sections[risk_level].strip() + "\n\n"
                             
                             # Add recommendations based on findings
-                            report += """## Recommendations
-
-                                Based on the analysis:
-                                """
+                            report += "## Recommendations\n\n"
+                            report += "Based on the analysis:\n"
                             
                             if "High Risk" in scheduler_content:
                                 report += "- **For high-risk items**: Immediate escalation to management and suppliers required\n"
@@ -613,18 +605,14 @@ class ChatbotManager:
                             if "Low Risk" in scheduler_content:
                                 report += "- **For low-risk items**: Continue regular monitoring according to standard procedures\n"
                             
-                            report += """
-                                ## Next Steps
-
-                                1. Review all identified risks with project stakeholders
-                                2. Implement recommended mitigation actions
-                                3. Update tracking mechanisms to monitor progress
-                                4. Schedule follow-up reviews for high and medium risk items
-
-                                ## Conclusion
-
-                                This report provides a comprehensive view of the current equipment schedule status and associated risks. Immediate attention is recommended for all high-risk items to prevent potential project delays.
-                                """
+                            report += "\n## Next Steps\n\n"
+                            report += "1. Review all identified risks with project stakeholders\n"
+                            report += "2. Implement recommended mitigation actions\n"
+                            report += "3. Update tracking mechanisms to monitor progress\n"
+                            report += "4. Schedule follow-up reviews for high and medium risk items\n\n"
+                            
+                            report += "## Conclusion\n\n"
+                            report += "This report provides a comprehensive view of the current equipment schedule status and associated risks. Immediate attention is recommended for all high-risk items to prevent potential project delays."
                             
                             # Create a mock response for the reporting agent
                             if REPORTING_AGENT not in latest_responses:
@@ -659,45 +647,33 @@ class ChatbotManager:
                             
                             # Generate a simplified report based on scheduler content
                             if scheduler_content:
-                                report = f"""REPORTING_AGENT > 
-                                            # Schedule Analysis Summary
-
-                                            The scheduler has analyzed the equipment schedule data. However, due to communication limitations, a detailed report could not be generated at this time.
-
-                                            ## Scheduler Analysis Output
-
-                                            {scheduler_content}
-
-                                            ## Next Steps
-
-                                            Please try again or contact the project management team for support with the schedule analysis.
-                                        """
+                                report = "REPORTING_AGENT > \n"
+                                report += "# Schedule Analysis Summary\n\n"
+                                report += "The scheduler has analyzed the equipment schedule data. However, due to communication limitations, a detailed report could not be generated at this time.\n\n"
+                                report += "## Scheduler Analysis Output\n\n"
+                                report += scheduler_content + "\n\n"
+                                report += "## Next Steps\n\n"
+                                report += "Please try again or contact the project management team for support with the schedule analysis."
                             else:
-                                report = """REPORTING_AGENT > 
-                                    # Schedule Analysis Summary
-
-                                    The scheduler encountered issues while analyzing the equipment schedule data. No detailed report could be generated.
-
-                                    ## Recommendations
-
-                                    1. Please try your request again
-                                    2. If the issue persists, contact technical support
-                                    3. Consider breaking down your request into smaller, more specific queries
-
-                                    ## Next Steps
-
-                                    Please ensure your request is clear and specific. Try asking about:
-                                    - Specific equipment items
-                                    - Specific risk categories
-                                    - Specific time periods
-                                    """
+                                report = "REPORTING_AGENT > \n"
+                                report += "# Schedule Analysis Summary\n\n"
+                                report += "The scheduler encountered issues while analyzing the equipment schedule data. No detailed report could be generated.\n\n"
+                                report += "## Recommendations\n\n"
+                                report += "1. Please try your request again\n"
+                                report += "2. If the issue persists, contact technical support\n"
+                                report += "3. Consider breaking down your request into smaller, more specific queries\n\n"
+                                report += "## Next Steps\n\n"
+                                report += "Please ensure your request is clear and specific. Try asking about:\n"
+                                report += "- Specific equipment items\n"
+                                report += "- Specific risk categories\n"
+                                report += "- Specific time periods"
                             
                             latest_responses[REPORTING_AGENT] = ChatMessageContent(
                                 role=AuthorRole.ASSISTANT,
                                 name=REPORTING_AGENT,
                                 content=report
                             )
-                    
+
                     except Exception as e:
                         print(f"Error trying to bridge gap between scheduler and reporting agents: {e}")
                         import traceback

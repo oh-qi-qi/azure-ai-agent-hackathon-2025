@@ -245,11 +245,14 @@ class ParallelRiskAnalysisStrategy(SequentialSelectionStrategy):
     
     def __init__(self):
         super().__init__()
-        self.agents_completed = set()
-        self.risk_agents = {POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT}
-        self.agent_queue = []
-        self.last_execution_time = {}
-        self.min_interval = 1.0  # Minimum 1 second between agent executions
+        # Store all state in a separate dictionary to avoid Pydantic validation issues
+        self._state = {
+            'agents_completed': set(),
+            'risk_agents': {POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT},
+            'agent_queue': [],
+            'last_execution_time': {},
+            'min_interval': 1.0  # Minimum 1 second between agent executions
+        }
         
     async def select_agent(self, agents, history):
         """Select the next agent with rate limit handling."""
@@ -262,34 +265,34 @@ class ParallelRiskAnalysisStrategy(SequentialSelectionStrategy):
                                 for msg in history)
         
         # If scheduler completed but risk agents haven't run yet
-        if scheduler_completed and not self.agents_completed:
+        if scheduler_completed and not self._state['agents_completed']:
             # Initialize queue for risk agents if empty
-            if not self.agent_queue:
-                self.agent_queue = list(self.risk_agents)
+            if not self._state['agent_queue']:
+                self._state['agent_queue'] = list(self._state['risk_agents'])
             
             # Rate limiting logic
             current_time = time.time()
             
             # Check if we can execute the next agent
-            for agent_name in self.agent_queue:
-                last_exec = self.last_execution_time.get(agent_name, 0)
-                if current_time - last_exec >= self.min_interval:
+            for agent_name in self._state['agent_queue']:
+                last_exec = self._state['last_execution_time'].get(agent_name, 0)
+                if current_time - last_exec >= self._state['min_interval']:
                     # Update execution time
-                    self.last_execution_time[agent_name] = current_time
+                    self._state['last_execution_time'][agent_name] = current_time
                     
                     # Find and return the agent
                     agent = next((a for a in agents if a.name == agent_name), None)
                     if agent:
-                        self.agent_queue.remove(agent_name)
-                        self.agents_completed.add(agent_name)
+                        self._state['agent_queue'].remove(agent_name)
+                        self._state['agents_completed'].add(agent_name)
                         return agent
             
             # If no agent can execute due to rate limits, wait
-            await asyncio.sleep(self.min_interval)
-            return self.select_agent(agents, history)
+            await asyncio.sleep(self._state['min_interval'])
+            return await self.select_agent(agents, history)
         
         # If all risk agents have completed, select reporting agent
-        if self.agents_completed == self.risk_agents:
+        if self._state['agents_completed'] == self._state['risk_agents']:
             return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
         
         return None
