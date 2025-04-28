@@ -188,13 +188,31 @@ class ChatbotSelectionStrategy(SequentialSelectionStrategy):
 
 # Termination Strategy for interactive chatbot - FIXED VERSION
 class ChatbotTerminationStrategy(TerminationStrategy):
-    """Enhanced termination strategy for different query types."""
+    """Enhanced termination strategy for different query types with timeout handling."""
+    
+    def __init__(self):
+        """Initialize the termination strategy."""
+        super().__init__()
+        # Store all state in local instance variables to avoid Pydantic validation
+        self._start_time = time.time()
+        self._max_turns = 10
+        self._timeout_seconds = 120
     
     async def should_terminate(self, selected_agent, history):
         """Check if the chat should terminate."""
         # If we have fewer than 2 messages, don't terminate
         if len(history) < 2:
             return False
+        
+        # Check for timeout
+        if time.time() - self._start_time > self._timeout_seconds:
+            print(f"Chat terminated due to timeout after {self._timeout_seconds} seconds")
+            return True
+        
+        # Check for maximum turns
+        if len(history) > self._max_turns * 2:  # *2 because each turn is user + assistant
+            print(f"Chat terminated due to exceeding maximum turns: {self._max_turns}")
+            return True
         
         # Extract the original user query
         original_query = ""
@@ -251,6 +269,14 @@ class ChatbotTerminationStrategy(TerminationStrategy):
         last_agent = history[-1].name if hasattr(history[-1], 'name') else None
         if last_agent == ASSISTANT_AGENT:
             return True
+        
+        # Special case: error detection
+        # Terminate if any agent has generated an error message
+        for msg in history:
+            if hasattr(msg, 'content') and isinstance(msg.content, str):
+                if "i'm sorry, i couldn't" in msg.content.lower() or "error" in msg.content.lower():
+                    # Look for error indicators in the last few messages
+                    return True
         
         # Don't terminate yet - continue the conversation
         return False

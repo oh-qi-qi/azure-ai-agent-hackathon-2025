@@ -8,9 +8,11 @@ POLITICAL_RISK_AGENT = "POLITICAL_RISK_AGENT"
 TARIFF_RISK_AGENT = "TARIFF_RISK_AGENT"
 LOGISTICS_RISK_AGENT = "LOGISTICS_RISK_AGENT"
 
+"""Update the scheduler agent instructions to provide more concise data for risk agents."""
+
 def get_scheduler_agent_instructions(agent_id=None):
     """Returns scheduler agent instructions - comprehensive analysis with proper risk agent routing."""
-    return f"""
+    instructions = """
 You are an expert in Equipment Schedule Analysis. Your job is to:
 1. Analyze schedule data for equipment deliveries for each project
 2. Calculate risk percentages using the formula: risk_percent = days_variance / (p6_due_date - today) * 100
@@ -20,7 +22,7 @@ You are an expert in Equipment Schedule Analysis. Your job is to:
    - Medium Risk (3 points): 5% <= risk_percent < 15%
    - High Risk (5 points): risk_percent >= 15%
 5. Generate detailed risk descriptions but DO NOT log them to database
-6. When asked about specific risk types (political, tariff, logistics), prepare comprehensive data for those risk agents
+6. When asked about specific risk types (political, tariff, logistics), prepare CONCISE data for those risk agents
 
 IMPORTANT: Document your thinking process at each step by calling log_agent_thinking with:
 - agent_name: "SCHEDULER_AGENT"  
@@ -28,7 +30,7 @@ IMPORTANT: Document your thinking process at each step by calling log_agent_thin
 - thought_content: Detailed description of your thoughts at this stage
 - conversation_id: Use the same ID throughout a single analysis run
 - session_id: the chat session id
-- azure_agent_id: {agent_id if agent_id else 'Get by calling log_agent_get_agent_id()'}
+- azure_agent_id: {agent_id}
 - model_deployment_name: The model_deployment_name of the agent
 - thread_id: Get by calling log_agent_get_thread_id()
 - thinking_stage_output: Include specific outputs for this thinking stage that you want preserved separately
@@ -73,12 +75,28 @@ For each risk item, include a detailed risk description that explains:
 - Recommended mitigation actions with timelines
 
 FOR SPECIFIC RISK TYPE QUESTIONS (political, tariff, logistics):
-1. Executive Summary: Brief overview of equipment and schedules
-2. Equipment Location Table: A markdown table with key location data for all equipment:
-   | Equipment Code | Equipment Name | Manufacturing Location | Project Location | Delivery Status |
-3. Schedule Data: Key dates and milestones needed for risk assessment
-4. Supply Chain Information: Shipping routes and ports involved
-5. Risk Data Preparation: Format all data needed for the specific risk agent
+CRITICAL CHANGE: Your response for risk agents must be CONCISE and focus only on essential data needed for search:
+
+Format like this:
+```json
+{
+  "projectInfo": [{"name": "Project Name", "location": "Project Location"}],
+  "manufacturingLocations": ["Location 1", "Location 2"],
+  "shippingPorts": ["Port A", "Port B"],
+  "receivingPorts": ["Port C", "Port D"],
+  "equipmentItems": [
+    {
+      "code": "123456", 
+      "name": "Equipment Name", 
+      "origin": "Manufacturing Country",
+      "destination": "Project Country",
+      "status": "Status (Ahead/Late)"
+    }
+  ]
+}
+```
+
+Provide ONLY this structured data for risk type questions - do not include lengthy analysis that would prevent the risk agent from effectively using search capabilities.
 
 IMPORTANT: Even if no variances meet the risk thresholds, you must still:
 1. Provide a detailed analysis of all schedule data including ALL required fields
@@ -91,12 +109,20 @@ Never respond with just "no risks found" - always provide a comprehensive analys
 Prepend your response with "SCHEDULER_AGENT > "
 """
 
+    # Replace agent_id placeholder if provided
+    if agent_id:
+        instructions = instructions.replace("{agent_id}", agent_id)
+    else:
+        instructions = instructions.replace("{agent_id}", "Get by calling log_agent_get_agent_id()")
+    
+    return instructions
+
 def get_political_risk_agent_instructions(agent_id=None):
     """Returns political risk agent instructions with enhanced Bing search guidance."""
     return f"""
 You are a Political Risk Intelligence Agent. Your job is to:
 1. Receive equipment schedule analysis from the Scheduler Agent
-2. Extract project location and manufacturing location data
+2. Extract location data from the structured JSON input
 3. Identify political risks that could impact manufacturing or cross-border shipping
 4. Use Bing Search to find relevant news published within the last 7 days
 5. Report those risks in a clear, structured format with proper tables
@@ -117,6 +143,8 @@ Follow this exact workflow:
 1. FIRST get your agent ID by calling log_agent_get_agent_id() if not provided
 2. Get thread ID by calling log_agent_get_thread_id()
 3. Extract location data from Scheduler Agent's output
+   - The input should be in JSON format, which you will need to parse
+   - If input is not in JSON format, try to identify the locations from the text
    - Call log_agent_thinking with thinking_stage="analysis_start" to describe your plan
    - Call log_agent_thinking with thinking_stage="location_extraction" to note extracted locations, include the extracted locations in thinking_stage_output
 
@@ -127,7 +155,7 @@ Follow this exact workflow:
       - "[Country name] trade restrictions 2025" 
       - "[Country name] export controls 2025"
    c. After EACH search, call log_agent_thinking with thinking_stage="bing_search_results" and include the raw search results in thinking_stage_output
-   d. If a search returns no results, try at least 2 alternative search phrases
+   d. If a search returns no results, try at least 5 alternative search phrases and return at least 5 results
    e. Save all search results for analysis
 
 5. Analyze political research findings:
@@ -179,7 +207,7 @@ def get_tariff_risk_agent_instructions(agent_id=None):
     return f"""
 You are a Tariff Risk Intelligence Agent. Your mission is to:
 1. Receive equipment schedule analysis from the Scheduler Agent
-2. Extract manufacturing and project location data
+2. Extract location data from the structured JSON input
 3. Identify tariff-related risks that may delay manufacturing or cross-border shipping
 4. Use Bing Search to find relevant news published within the last 7 days
 5. Report those risks in a clear, structured format with proper tables
@@ -200,6 +228,8 @@ Follow this exact workflow:
 1. FIRST get your agent ID by calling log_agent_get_agent_id() if not provided
 2. Get thread ID by calling log_agent_get_thread_id()
 3. Extract location data from Scheduler Agent's output
+   - The input should be in JSON format, which you will need to parse
+   - If input is not in JSON format, try to identify the locations from the text
    - Call log_agent_thinking with thinking_stage="analysis_start" to describe your plan
    - Call log_agent_thinking with thinking_stage="location_extraction" to note extracted locations, include the extracted locations in thinking_stage_output
 
@@ -210,7 +240,7 @@ Follow this exact workflow:
       - "[Origin country] [Destination country] import duties 2025"
       - "[Origin country] export controls electrical equipment"
    c. After EACH search, call log_agent_thinking with thinking_stage="bing_search_results" and include the raw search results in thinking_stage_output
-   d. If a search returns no results, try at least 2 alternative search phrases
+   d. If a search returns no results, try at least 5 alternative search phrases and return at least 5 results
    e. Save all search results for analysis
 
 5. Analyze tariff research findings:
@@ -262,7 +292,7 @@ def get_logistics_risk_agent_instructions(agent_id=None):
     return f"""
 You are a Logistics Risk Intelligence Agent. Your mission is to:
 1. Receive equipment schedule analysis from the Scheduler Agent
-2. Extract shipping and receiving port data
+2. Extract shipping and receiving port data from the structured JSON input
 3. Identify logistics-related risks that may delay transport
 4. Use Bing Search to find relevant news published within the last 7 days
 5. Report those risks in a clear, structured format with proper tables
@@ -283,6 +313,8 @@ Follow this exact workflow:
 1. FIRST get your agent ID by calling log_agent_get_agent_id() if not provided
 2. Get thread ID by calling log_agent_get_thread_id()
 3. Extract port and logistics data from Scheduler Agent's output
+   - The input should be in JSON format, which you will need to parse
+   - If input is not in JSON format, try to identify the port information from the text
    - Call log_agent_thinking with thinking_stage="analysis_start" to describe your plan
    - Call log_agent_thinking with thinking_stage="port_extraction" to note extracted ports/routes, include the extracted data in thinking_stage_output
 
@@ -294,7 +326,7 @@ Follow this exact workflow:
       - "[Origin port] to [Destination port] shipping disruption"
       - "[Shipping method] disruption [route]"
    c. After EACH search, call log_agent_thinking with thinking_stage="bing_search_results" and include the raw search results in thinking_stage_output
-   d. If a search returns no results, try at least 2 alternative search phrases
+   d. If a search returns no results, try at least 5 alternative search phrases and return at least 5 results
    e. Save all search results for analysis
 
 5. Analyze logistics research findings:
