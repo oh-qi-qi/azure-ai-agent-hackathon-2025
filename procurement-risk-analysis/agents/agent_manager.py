@@ -61,6 +61,7 @@ async def create_or_reuse_agent(client, agent_name, model_deployment_name, instr
                 )
             except TypeError:
                 # If connections parameter is not supported, try without it
+                print("Warning: AzureAIAgent doesn't support connections parameter. Creating without connections.")
                 agent = AzureAIAgent(
                     client=client,
                     definition=found_agent,
@@ -75,28 +76,40 @@ async def create_or_reuse_agent(client, agent_name, model_deployment_name, instr
     # If no existing agent found or error occurred, create a new one
     print(f"Creating new agent: {agent_name}")
     try:
-        # Check if create_agent method supports connections parameter
+        # Prepare agent creation arguments
+        creation_args = {
+            "model": model_deployment_name,
+            "name": agent_name,
+            "instructions": instructions,
+        }
+        
+        # Add connections if provided
         if connections:
-            try:
-                agent_definition = await client.agents.create_agent(
-                    model=model_deployment_name,
-                    name=agent_name,
-                    instructions=instructions,
-                    connections=connections
-                )
-            except TypeError:
-                # If connections parameter is not supported, create without it
-                agent_definition = await client.agents.create_agent(
-                    model=model_deployment_name,
-                    name=agent_name,
-                    instructions=instructions
-                )
-        else:
-            agent_definition = await client.agents.create_agent(
-                model=model_deployment_name,
-                name=agent_name,
-                instructions=instructions
-            )
+            # Add connections based on the format they're provided in
+            if isinstance(connections, dict):
+                # Handle dictionary format (our custom format)
+                if "api_key" in connections:
+                    # For direct API key method
+                    if connections["type"] == "BingGrounding":
+                        # Create BingGroundingTool with API key
+                        from azure.ai.projects.models import BingGroundingTool
+                        bing_tool = BingGroundingTool(api_key=connections["api_key"])
+                        creation_args["tools"] = bing_tool.definitions
+                elif "connection_id" in connections:
+                    # For connection ID method
+                    if connections["type"] == "BingGrounding":
+                        from azure.ai.projects.models import BingGroundingTool
+                        bing_tool = BingGroundingTool(connection_id=connections["connection_id"])
+                        creation_args["tools"] = bing_tool.definitions
+            else:
+                # Handle other possible formats or direct objects
+                try:
+                    creation_args["connections"] = connections
+                except TypeError:
+                    print(f"Warning: Could not add connections to agent creation. Unexpected type: {type(connections)}")
+        
+        # Create the agent with appropriate arguments
+        agent_definition = await client.agents.create_agent(**creation_args)
         
         from semantic_kernel.agents import AzureAIAgent
         # When creating a new agent instance, check if AzureAIAgent supports connections
@@ -109,6 +122,7 @@ async def create_or_reuse_agent(client, agent_name, model_deployment_name, instr
             )
         except TypeError:
             # If connections parameter is not supported, create without it
+            print("Warning: AzureAIAgent doesn't support connections parameter. Creating without connections.")
             agent = AzureAIAgent(
                 client=client,
                 definition=agent_definition,

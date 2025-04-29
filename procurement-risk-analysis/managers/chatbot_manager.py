@@ -43,7 +43,7 @@ class ChatbotManager:
     
     def __init__(self, connection_string):
         """Initialize the chatbot manager.
-        
+    
         Args:
             connection_string: The database connection string.
         """
@@ -244,14 +244,31 @@ class ChatbotManager:
         # Create Bing connection configuration if API key is available
         bing_connection = None
         if self.bing_api_key:
+            # Use the direct API key method which is more reliable
             bing_connection = {
                 "type": "BingGrounding",
-                "connection_name": "bing",
                 "api_key": self.bing_api_key
             }
             print(f"Bing connection configured with API key: {'*' * 10}{self.bing_api_key[-4:]}")
         else:
-            print("WARNING: Bing search will not be available")
+            # Try to get connection name from environment
+            bing_connection_name = os.getenv("BING_CONNECTION_NAME")
+            if bing_connection_name:
+                try:
+                    # Get the connection by name
+                    print(f"Trying to use named Bing connection: {bing_connection_name}")
+                    bing_conn = client.connections.get(connection_name=bing_connection_name)
+                    bing_connection = {
+                        "type": "BingGrounding",
+                        "connection_id": bing_conn.id
+                    }
+                    print(f"Retrieved Bing connection with ID: {bing_conn.id}")
+                except Exception as e:
+                    print(f"Error getting Bing connection by name: {e}")
+                    print("Bing search will not be available")
+            else:
+                print("WARNING: Neither BING_SEARCH_API_KEY nor BING_CONNECTION_NAME is set")
+                print("Bing search will not be available")
         
         # Create scheduler agent
         print(f"Creating/retrieving scheduler agent for session {session_id}...")
@@ -355,7 +372,7 @@ class ChatbotManager:
             "chat": chat,
             "parallel_chat": parallel_chat,
             "client": client,
-            "credential": credential,  # Now properly defined
+            "credential": credential,
             "last_activity": datetime.now(),
             "model_deployment_name": ai_agent_settings.model_deployment_name,
             "agents": agents,
