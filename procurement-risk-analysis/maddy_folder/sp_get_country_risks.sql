@@ -1,10 +1,14 @@
 CREATE OR ALTER PROCEDURE [dbo].[GetCountryRiskHeatmapData]
+    @ConversationId NVARCHAR(255) = NULL,
+    @SessionId NVARCHAR(255) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
     
     -- Temporary table to hold the flattened political risks
     DECLARE @PoliticalRisks TABLE (
+        ConversationId NVARCHAR(255),
+        SessionId NVARCHAR(255),
         CountryName NVARCHAR(255),
         PoliticalType NVARCHAR(255),
         RiskInformation NVARCHAR(MAX),
@@ -19,6 +23,8 @@ BEGIN
     -- Insert the flattened political_risks data into the temporary table
     INSERT INTO @PoliticalRisks
     SELECT 
+        dat.conversation_id AS ConversationId,
+        dat.session_id AS SessionId,
         JSON_VALUE(pr.value, '$.country') AS CountryName,
         JSON_VALUE(pr.value, '$.political_type') AS PoliticalType,
         JSON_VALUE(pr.value, '$.risk_information') AS RiskInformation,
@@ -30,10 +36,14 @@ BEGIN
         JSON_VALUE(pr.value, '$.citation_url') AS CitationUrl
     FROM [dbo].[dim_agent_event_log] AS dat
     CROSS APPLY OPENJSON(JSON_QUERY(dat.value, '$.political_risks')) AS pr
-    WHERE dat.[action] = 'Political Risk JSON Data';
+    WHERE dat.[action] = 'Political Risk JSON Data'
+    AND (@ConversationId IS NULL OR dat.conversation_id = @ConversationId)
+    AND (@SessionId IS NULL OR dat.session_id = @SessionId);
     
     -- Create table to hold country summary data
     DECLARE @CountrySummary TABLE (
+        ConversationId NVARCHAR(255),
+        SessionId NVARCHAR(255),
         Country NVARCHAR(255),
         TotalLikelihood FLOAT,
         RiskCount INT
@@ -42,15 +52,19 @@ BEGIN
     -- Calculate country totals
     INSERT INTO @CountrySummary
     SELECT 
+        ConversationId,
+        SessionId,
         CountryName,
         SUM(CAST(Likelihood AS FLOAT)) AS TotalLikelihood,
         COUNT(*) AS RiskCount
     FROM @PoliticalRisks
-    GROUP BY CountryName;
+    GROUP BY ConversationId, SessionId, CountryName;
     
     -- Construct the final JSON result
     WITH CountryData AS (
         SELECT 
+            cs.ConversationId,
+            cs.SessionId,
             cs.Country,
             ROUND(cs.TotalLikelihood / cs.RiskCount, 0) AS AverageRisk,
             (
@@ -65,6 +79,8 @@ BEGIN
                     pr.CitationUrl AS 'source_url'
                 FROM @PoliticalRisks pr
                 WHERE pr.CountryName = cs.Country
+                AND pr.ConversationId = cs.ConversationId 
+                AND pr.SessionId = cs.SessionId
                 FOR JSON PATH
             ) AS Breakdown
         FROM @CountrySummary cs
@@ -73,6 +89,8 @@ BEGIN
     SELECT (
         SELECT 
             CONVERT(NVARCHAR(30), GETDATE(), 126) AS 'DateTime_stamp',
+            cd.ConversationId,
+            cd.SessionId,
             cd.Country,
             cd.AverageRisk AS 'Average_Risk',
             JSON_QUERY(cd.Breakdown) AS 'Breakdown'
@@ -80,3 +98,19 @@ BEGIN
         FOR JSON PATH
     ) AS HeatmapData;
 END
+
+/*
+
+-- To get all data
+EXEC [dbo].[GetCountryRiskHeatmapData]
+
+-- To filter by conversation ID
+EXEC [dbo].[GetCountryRiskHeatmapData] @ConversationId = 'conversation123'
+
+-- To filter by session ID
+EXEC [dbo].[GetCountryRiskHeatmapData] @SessionId = 'session456'
+
+-- To filter by both
+EXEC [dbo].[GetCountryRiskHeatmapData] @ConversationId = 'conversation123', @SessionId = 'session456'
+
+*/
