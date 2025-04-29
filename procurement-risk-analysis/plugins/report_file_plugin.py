@@ -287,8 +287,8 @@ class ReportFilePlugin:
                 
                 # Replace tables with placeholders
                 content_parts = list(content)
-                for start, end, table_content in table_positions:
-                    placeholder = f"\n[TABLE_{len(table_positions)}]\n"
+                for idx, (start, end, table_content) in enumerate(table_positions):
+                    placeholder = f"\n[TABLE_{idx}]\n"
                     content_parts[start:end] = placeholder
                 
                 # Reassemble content
@@ -296,34 +296,7 @@ class ReportFilePlugin:
             else:
                 modified_content = content
             
-            # Split content by headers
-            sections = []
-            lines = modified_content.split('\n')
-            current_header = None
-            current_content = []
-            
-            for line in lines:
-                # Check for headers (# Header)
-                header_match = re.match(r'^(#+)\s+(.*)', line)
-                if header_match:
-                    # Save previous section if it exists
-                    if current_header:
-                        sections.append((current_header, '\n'.join(current_content)))
-                    
-                    # Start new section
-                    level = len(header_match.group(1))
-                    header_text = header_match.group(2).strip()
-                    current_header = (level, header_text)
-                    current_content = []
-                else:
-                    # Add to current section
-                    current_content.append(line)
-            
-            # Add the last section
-            if current_header:
-                sections.append((current_header, '\n'.join(current_content)))
-            
-            # Function to render a table from markdown format
+            # Define table rendering function
             def render_table(table_content):
                 lines = table_content.strip().split('\n')
                 rows = []
@@ -381,9 +354,41 @@ class ReportFilePlugin:
                 table.setStyle(TableStyle(style))
                 return table
             
+            # Split content by headers and create a dictionary
+            sections = {}
+            lines = modified_content.split('\n')
+            current_header = None
+            current_content = []
+            
+            for line in lines:
+                # Check for headers (# Header)
+                header_match = re.match(r'^(#+)\s+(.*)', line)
+                if header_match:
+                    # Save previous section if it exists
+                    if current_header:
+                        sections[current_header] = '\n'.join(current_content)
+                    
+                    # Start new section
+                    level = len(header_match.group(1))
+                    header_text = header_match.group(2).strip()
+                    current_header = (level, header_text)
+                    current_content = []
+                else:
+                    # Add to current section
+                    current_content.append(line)
+            
+            # Add the last section
+            if current_header:
+                sections[current_header] = '\n'.join(current_content)
+            
+            # Handle case where there are no headers
+            if not sections and modified_content.strip():
+                # Create a default section
+                sections[(1, "Content")] = modified_content
+            
             # Render sections with table handling
-            for level, header in sections:
-                content = sections[level, header]
+            for section_header, content in sections.items():
+                level, header = section_header  # Unpack the tuple
                 
                 # Add header
                 if level == 1:
@@ -423,15 +428,18 @@ class ReportFilePlugin:
                         # Add table if there is one after this part
                         if i < len(table_placeholders):
                             # Get original table content
-                            table_idx = int(table_placeholders[i].split('_')[1].rstrip(']'))
-                            if table_idx < len(table_positions):
-                                _, _, table_content = table_positions[table_idx]
-                                
-                                # Render table
-                                table = render_table(table_content)
-                                if table:
-                                    story.append(table)
-                                    story.append(Spacer(1, 5))
+                            try:
+                                table_idx = int(table_placeholders[i].split('_')[1].rstrip(']'))
+                                if table_idx < len(table_positions):
+                                    _, _, table_content = table_positions[table_idx]
+                                    
+                                    # Render table
+                                    table = render_table(table_content)
+                                    if table:
+                                        story.append(table)
+                                        story.append(Spacer(1, 5))
+                            except (ValueError, IndexError) as e:
+                                print(f"Error processing table placeholder: {e}")
                 else:
                     # No tables, just process text
                     paragraphs = content.strip().split('\n\n')
@@ -472,7 +480,7 @@ class ReportFilePlugin:
             print(f"Error generating PDF: {e}")
             traceback.print_exc()
             raise
-    
+
     def _upload_to_data_lake(self, filepath: str, filename: str) -> str:
         """Uploads a file to Azure Data Lake Storage with improved error handling.
         

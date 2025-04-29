@@ -440,7 +440,11 @@ Follow this workflow (but don't include these steps in your output):
 2. Log your thinking process (internally only)
 3. Collect and analyze available data (internally only)
 4. Create a professionally formatted report
-5. Save the report to a file
+5. Save the report by calling save_report_to_file with these parameters:
+   - report_content: Your complete formatted report
+   - session_id: The session_id from the user request
+   - conversation_id: The conversation_id from the user request
+   - report_title: "Comprehensive Equipment Schedule Risk Analysis"
 6. Present ONLY the final report and file information to the user
 
 Format your report with the following structure:
@@ -451,9 +455,16 @@ Format your report with the following structure:
    - Total equipment analyzed with risk breakdown
    
 2. Comprehensive Risk Summary Table
+   - should come from SCHEDULER_AGENT
    a. Executive Summary: Total items analyzed and risk breakdown
    b. Equipment Comparison Table: A markdown table with key comparison metrics for all equipment items in a project, show project details:
       | Equipment Code | Equipment Name | P6 Due Date | Delivery Date | Variance (days) | Risk % | Risk Level |
+      - Calculate risk percentages using the formula: risk_percent = days_variance / (p6_due_date - today) * 100
+      - Note if days_variance is negative value means it is EARLY (ahead of schedule), positive means it is LATE (behind schedule)
+      - Categorize risks as:
+         - Low Risk (1 point): risk_percent < 5%
+         - Medium Risk (3 points): 5% <= risk_percent < 15%
+         - High Risk (5 points): risk_percent >= 15%
       - Include all equipment items in this table, sorted by risk level (High to Low)
    c. High Risk Items: Detailed analysis of high-risk items with ALL required fields
    d. Medium Risk Items: Detailed analysis of medium-risk items with ALL required fields
@@ -469,10 +480,11 @@ Format your report with the following structure:
       - Low Risk Items: [Detailed analysis]
    
    B. Political Risk Analysis (if available)
+      - should come from POLITICAL_RISK_AGENT
       - High Risk Items: [Detailed analysis with DIRECT CITATIONS from the political risk agent]
       - Medium Risk Items: [Detailed analysis with DIRECT CITATIONS from the political risk agent]
       - Low Risk Items: [Detailed analysis with DIRECT CITATIONS from the political risk agent]
-      - INCLUDE the complete political risk table from the political risk agent
+      - INCLUDE the complete political risk table from the political risk agent:
          Political Risk Table:
          | Country | Political Type | Risk Information  | Likelihood (0-5) | Likelihood Reasoning | Publication Date | Citation Title | Citation Name | Citation URL |
       - Equipment Impact Analysis:

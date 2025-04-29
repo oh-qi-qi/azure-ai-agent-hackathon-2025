@@ -2,6 +2,7 @@
 INSERT INTO dim_project (project_code, project_name, project_country, project_location)
 VALUES ('100000', 'Project A', 'Germany', 'Rathenaustraße 2, 93055 Regensburg, Germany');
 
+
 -- Sample data for dim_work_package
 INSERT INTO dim_work_package (work_package_code, work_package_name, wbs)
 VALUES ('F12', 'Low Voltage / Power', 'S-100000-2-67-F12');
@@ -100,7 +101,10 @@ INSERT INTO dim_manufacturing_location (equipment_id, supplier_id, location_addr
 VALUES 
 (1, 1, '20 Cooper Square, New York, NY 10003, USA'),
 (2, 1, '200 Wangfujing Ave, Dongcheng, Beijing, China, 100836'),
-(3, 1, 'Adriatico St, Ermita, Manila, 1000 Metro Manila, Philippines');
+(3, 1, 'Adriatico St, Ermita, Manila, 1000 Metro Manila, Philippines'),
+(1, 1, 'Palika Bazar, Connaught Place, New Delhi, Delhi 110001, India'),
+(2, 1, '43 Charing Cross Rd, London WC2H 0AP, United Kingdom'),
+(3, 1, 'alan Seladang, Taman Abad, 80250 Johor Bahru, Johor, Malaysia');
 
 -- Sample data for Logistics Information
 INSERT INTO dim_logistics_info (equipment_id, supplier_id, logistics_method, shipping_port, receiving_port)
