@@ -4,8 +4,7 @@ CREATE OR ALTER PROCEDURE [dbo].[GetCountryRiskHeatmapData]
 AS
 BEGIN
     SET NOCOUNT ON;
-    
-    -- Temporary table to hold the flattened political risks
+
     DECLARE @PoliticalRisks TABLE (
         ConversationId NVARCHAR(255),
         SessionId NVARCHAR(255),
@@ -19,28 +18,28 @@ BEGIN
         CitationName NVARCHAR(255),
         CitationUrl NVARCHAR(255)
     );
-    
-    -- Insert the flattened political_risks data into the temporary table
+
+    -- Insert only when political_risks is not null
     INSERT INTO @PoliticalRisks
     SELECT 
-        dat.conversation_id AS ConversationId,
-        dat.session_id AS SessionId,
-        JSON_VALUE(pr.value, '$.country') AS CountryName,
-        JSON_VALUE(pr.value, '$.political_type') AS PoliticalType,
-        JSON_VALUE(pr.value, '$.risk_information') AS RiskInformation,
-        CAST(JSON_VALUE(pr.value, '$.likelihood') AS INT) AS Likelihood,
-        JSON_VALUE(pr.value, '$.likelihood_reasoning') AS LikelihoodReasoning,
-        JSON_VALUE(pr.value, '$.publication_date') AS PublicationDate,
-        JSON_VALUE(pr.value, '$.citation_title') AS CitationTitle,
-        JSON_VALUE(pr.value, '$.citation_name') AS CitationName,
-        JSON_VALUE(pr.value, '$.citation_url') AS CitationUrl
+        dat.conversation_id,
+        dat.session_id,
+        JSON_VALUE(pr.value, '$.country'),
+        JSON_VALUE(pr.value, '$.political_type'),
+        JSON_VALUE(pr.value, '$.risk_information'),
+        TRY_CAST(JSON_VALUE(pr.value, '$.likelihood') AS INT),
+        JSON_VALUE(pr.value, '$.likelihood_reasoning'),
+        JSON_VALUE(pr.value, '$.publication_date'),
+        JSON_VALUE(pr.value, '$.citation_title'),
+        JSON_VALUE(pr.value, '$.citation_name'),
+        JSON_VALUE(pr.value, '$.citation_url')
     FROM [dbo].[dim_agent_event_log] AS dat
     CROSS APPLY OPENJSON(JSON_QUERY(dat.value, '$.political_risks')) AS pr
     WHERE dat.[action] = 'Political Risk JSON Data'
-    AND (@ConversationId IS NULL OR dat.conversation_id = @ConversationId)
-    AND (@SessionId IS NULL OR dat.session_id = @SessionId);
-    
-    -- Create table to hold country summary data
+      AND JSON_QUERY(dat.value, '$.political_risks') IS NOT NULL
+      AND (@ConversationId IS NULL OR dat.conversation_id = @ConversationId)
+      AND (@SessionId IS NULL OR dat.session_id = @SessionId);
+
     DECLARE @CountrySummary TABLE (
         ConversationId NVARCHAR(255),
         SessionId NVARCHAR(255),
@@ -48,69 +47,48 @@ BEGIN
         TotalLikelihood FLOAT,
         RiskCount INT
     );
-    
-    -- Calculate country totals
+
     INSERT INTO @CountrySummary
     SELECT 
         ConversationId,
         SessionId,
         CountryName,
-        SUM(CAST(Likelihood AS FLOAT)) AS TotalLikelihood,
-        COUNT(*) AS RiskCount
+        SUM(CAST(Likelihood AS FLOAT)),
+        COUNT(*)
     FROM @PoliticalRisks
     GROUP BY ConversationId, SessionId, CountryName;
-    
-    -- Construct the final JSON result
+
     WITH CountryData AS (
         SELECT 
             cs.ConversationId,
             cs.SessionId,
             cs.Country,
-            ROUND(cs.TotalLikelihood / cs.RiskCount, 0) AS AverageRisk,
+            ROUND(cs.TotalLikelihood / NULLIF(cs.RiskCount, 0), 0) AS AverageRisk,
             (
                 SELECT 
-                    pr.CountryName AS 'country',
-                    pr.PoliticalType AS 'description',
-                    pr.RiskInformation AS 'summary',
-                    pr.Likelihood AS 'likelihood',
-                    pr.LikelihoodReasoning AS 'likelihood_reasoning',
-                    pr.PublicationDate AS 'publication_date',
-                    pr.CitationName AS 'source',
-                    pr.CitationUrl AS 'source_url'
+                    pr.CountryName AS country,
+                    pr.PoliticalType AS description,
+                    pr.RiskInformation AS summary,
+                    pr.Likelihood AS likelihood,
+                    pr.LikelihoodReasoning AS likelihood_reasoning,
+                    pr.PublicationDate AS publication_date,
+                    pr.CitationName AS source,
+                    pr.CitationUrl AS source_url
                 FROM @PoliticalRisks pr
                 WHERE pr.CountryName = cs.Country
-                AND pr.ConversationId = cs.ConversationId 
-                AND pr.SessionId = cs.SessionId
+                  AND pr.ConversationId = cs.ConversationId
+                  AND pr.SessionId = cs.SessionId
                 FOR JSON PATH
             ) AS Breakdown
         FROM @CountrySummary cs
     )
-    
-    SELECT (
-        SELECT 
-            CONVERT(NVARCHAR(30), GETDATE(), 126) AS 'DateTime_stamp',
-            cd.ConversationId,
-            cd.SessionId,
-            cd.Country,
-            cd.AverageRisk AS 'Average_Risk',
-            JSON_QUERY(cd.Breakdown) AS 'Breakdown'
-        FROM CountryData cd
-        FOR JSON PATH
-    ) AS HeatmapData;
+
+    SELECT
+        CONVERT(NVARCHAR(30), GETDATE(), 126) AS DateTime_stamp,
+        cd.ConversationId,
+        cd.SessionId,
+        cd.Country,
+        cd.AverageRisk AS Average_Risk,
+        JSON_QUERY(cd.Breakdown) AS Breakdown
+    FROM CountryData cd;
 END
-
-/*
-
--- To get all data
-EXEC [dbo].[GetCountryRiskHeatmapData]
-
--- To filter by conversation ID
-EXEC [dbo].[GetCountryRiskHeatmapData] @ConversationId = 'conversation123'
-
--- To filter by session ID
-EXEC [dbo].[GetCountryRiskHeatmapData] @SessionId = 'session456'
-
--- To filter by both
-EXEC [dbo].[GetCountryRiskHeatmapData] @ConversationId = 'conversation123', @SessionId = 'session456'
-
-*/
