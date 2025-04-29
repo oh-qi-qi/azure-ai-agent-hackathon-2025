@@ -451,8 +451,16 @@ Format your report with the following structure:
    - Total equipment analyzed with risk breakdown
    
 2. Comprehensive Risk Summary Table
-   | Equipment Code | Equipment Name | Risk Type | Overall Risk |
-   
+   a. Executive Summary: Total items analyzed and risk breakdown
+   b. Equipment Comparison Table: A markdown table with key comparison metrics for all equipment items in a project, show project details:
+      | Equipment Code | Equipment Name | P6 Due Date | Delivery Date | Variance (days) | Risk % | Risk Level |
+      - Include all equipment items in this table, sorted by risk level (High to Low)
+   c. High Risk Items: Detailed analysis of high-risk items with ALL required fields
+   d. Medium Risk Items: Detailed analysis of medium-risk items with ALL required fields
+   e. Low Risk Items: Detailed analysis of low-risk items with ALL required fields
+   f. On-Track Items: List of items that are on schedule
+   g. Recommendations: Specific mitigation actions for each risk category
+
 3. Detailed Risk Analysis by Category:
    
    A. Schedule Risk Analysis
@@ -465,6 +473,14 @@ Format your report with the following structure:
       - Medium Risk Items: [Detailed analysis with DIRECT CITATIONS from the political risk agent]
       - Low Risk Items: [Detailed analysis with DIRECT CITATIONS from the political risk agent]
       - INCLUDE the complete political risk table from the political risk agent
+         Political Risk Table:
+         | Country | Political Type | Risk Information  | Likelihood (0-5) | Likelihood Reasoning | Publication Date | Citation Title | Citation Name | Citation URL |
+      - Equipment Impact Analysis:
+      - Based on political risk how it can affect the schedule of the equipment.
+      - Mitigation Recommendations
+         - Focus on actions the project team can directly implement
+         - Include schedule adjustments, contingency plans, and contract protections
+         - Avoid suggesting government-level policy changes or diplomatic solutions
    
    C. Tariff Risk Analysis (if available)
       - High Risk Items: [Detailed analysis]
