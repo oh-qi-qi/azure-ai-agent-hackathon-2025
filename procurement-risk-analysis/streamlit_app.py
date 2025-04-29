@@ -257,6 +257,11 @@ def send_chat_message_direct(message):
 
 # Add a function to reset the chat session if needed
 def reset_chat_session():
+    """Reset the chat session and clean up resources."""
+    
+    # Store the old session ID for cleanup
+    old_session_id = st.session_state.session_id
+    
     # Generate a new session ID
     st.session_state.session_id = str(uuid.uuid4())
     st.session_state.chat_history = []
@@ -265,19 +270,44 @@ def reset_chat_session():
     if "chatbot_manager" in st.session_state:
         try:
             chatbot_manager = st.session_state.chatbot_manager
+            
             # Apply nest_asyncio to allow running asyncio in Streamlit
+            import nest_asyncio
             nest_asyncio.apply()
             
-            # Run the cleanup in the event loop
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(
-                chatbot_manager.cleanup_sessions(max_age_minutes=0)
-            )
+            # Create a new event loop if needed
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Run the cleanup for the specific session
+            if old_session_id:
+                try:
+                    print(f"Cleaning up old session {old_session_id}")
+                    future = chatbot_manager.close_session(old_session_id)
+                    loop.run_until_complete(asyncio.wait_for(future, timeout=10))
+                    print(f"Successfully cleaned up session {old_session_id}")
+                except Exception as e:
+                    print(f"Error cleaning up session {old_session_id}: {e}")
+                    import traceback
+                    traceback.print_exc()
         except Exception as e:
-            print(f"Error cleaning up sessions: {e}")
+            print(f"Error during chatbot manager cleanup: {e}")
+            import traceback
+            traceback.print_exc()
         
         # Remove the chatbot manager from session state
         del st.session_state.chatbot_manager
+    
+    # Remove any other session-specific state
+    for key in list(st.session_state.keys()):
+        if key.startswith("cache_") or key.startswith("temp_"):
+            del st.session_state[key]
     
     st.success("Chat session has been reset!")
 
@@ -292,8 +322,7 @@ def process_message():
     # Add user message to chat history
     st.session_state.chat_history.append({"role": "user", "content": user_message})
     
-    # Clear the input box BEFORE processing (this is key to fixing the StreamlitAPIException)
-    # We store the message temporarily and clear the input right away
+    # Clear the input box BEFORE processing
     temp_message = user_message
     st.session_state.user_message = ""
     
@@ -301,24 +330,42 @@ def process_message():
     api_mode = st.session_state.get("api_mode", False)
     
     with st.spinner("Assistant is thinking..."):
-        if api_mode:
-            response = send_chat_message_api(temp_message)
-        else:
-            response = send_chat_message_direct(temp_message)
-    
-    if response.get("status") == "success":
-        assistant_message = response.get("response", "No response")
-        # Add assistant message to chat history
-        st.session_state.chat_history.append({"role": "assistant", "content": assistant_message})
-        
-        # Store conversation_id in session state if available
-        if response.get("conversation_id"):
-            st.session_state.conversation_id = response["conversation_id"]
-    else:
-        error_message = response.get('error', 'Unknown error')
-        st.error(f"Error: {error_message}")
-        # Add error message to chat history so user knows what happened
-        st.session_state.chat_history.append({"role": "assistant", "content": f"I encountered an error: {error_message}. Please try again."})
+        try:
+            if api_mode:
+                response = send_chat_message_api(temp_message)
+            else:
+                response = send_chat_message_direct(temp_message)
+                
+            if response.get("status") == "success":
+                assistant_message = response.get("response", "No response")
+                # Add assistant message to chat history
+                st.session_state.chat_history.append({"role": "assistant", "content": assistant_message})
+                
+                # Store conversation_id in session state if available
+                if response.get("conversation_id"):
+                    st.session_state.conversation_id = response["conversation_id"]
+            elif response.get("status") == "error":
+                error_message = response.get('error', 'Unknown error')
+                st.error(f"Error: {error_message}")
+                # Add error message to chat history
+                st.session_state.chat_history.append({"role": "assistant", "content": f"I encountered an error: {error_message}. Please try again."})
+                
+                # If certain kinds of errors occur, reset the session
+                if "timeout" in error_message.lower() or "rate limit" in error_message.lower():
+                    st.warning("Resetting chat session due to timeout or rate limit...")
+                    reset_chat_session()
+            else:
+                st.warning("Received unexpected response status")
+                st.session_state.chat_history.append({"role": "assistant", "content": "I received an unexpected response. Please try again."})
+                
+        except Exception as e:
+            st.error(f"Unexpected error: {str(e)}")
+            st.session_state.chat_history.append({"role": "assistant", "content": f"An unexpected error occurred: {str(e)}. Please try again."})
+            
+            # Log the error
+            import traceback
+            error_traceback = traceback.format_exc()
+            print(f"Error in process_message: {error_traceback}")
 
 # Streamlit interface
 st.title("Equipment Schedule Agent")
@@ -743,34 +790,87 @@ st.caption("Equipment Schedule Agent v1.0 | Built with Streamlit and Semantic Ke
 # Add session cleanup function
 def cleanup_resources():
     """Clean up any resources when the app is done."""
+    print("Running cleanup_resources...")
+    
     if "chatbot_manager" in st.session_state:
         chatbot_manager = st.session_state.chatbot_manager
-        if hasattr(chatbot_manager, "cleanup_sessions") and callable(chatbot_manager.cleanup_sessions):
-            # Apply nest_asyncio to allow running asyncio in Streamlit
-            nest_asyncio.apply()
-            # Run the cleanup
+        
+        # For the main thread in Streamlit, we need to use nest_asyncio
+        import nest_asyncio
+        nest_asyncio.apply()
+        
+        # Get or create event loop
+        try:
             loop = asyncio.get_event_loop()
-            loop.run_until_complete(chatbot_manager.cleanup_sessions(max_age_minutes=0))
-            print("Cleaned up chat sessions")
-
+            if loop.is_closed():
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        try:
+            # Get all active session IDs
+            if hasattr(chatbot_manager, 'chat_sessions'):
+                session_ids = list(chatbot_manager.chat_sessions.keys())
+                
+                # Run cleanup for each session synchronously
+                for session_id in session_ids:
+                    print(f"Cleaning up session {session_id}")
+                    result = loop.run_until_complete(
+                        chatbot_manager.close_session(session_id)
+                    )
+                    print(f"Session {session_id} cleanup result: {result}")
+                    
+            # Use the correct method name: cleanup_sessions instead of cleanup_all_sessions
+            if hasattr(chatbot_manager, 'cleanup_sessions'):
+                print("Running general cleanup_sessions with max_age_minutes=0")
+                loop.run_until_complete(chatbot_manager.cleanup_sessions(max_age_minutes=0))
+                    
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+            import traceback
+            traceback.print_exc()
+                
+        print("Resources cleaned up")
+    else:
+        print("No chatbot_manager in session state to clean up")
 
 # Main entry point
 if __name__ == "__main__":
     try:
+        # Make sure asyncio is imported
+        import asyncio
+        
+        # Apply nest_asyncio for safety
+        import nest_asyncio
+        nest_asyncio.apply()
+        
         # Register the cleanup function to run when Streamlit is done
         import atexit
         atexit.register(cleanup_resources)
         
-        # Also register signal handlers for proper cleanup
-        import signal
-        
-        def signal_handler(sig, frame):
-            print(f"Received signal {sig}, running cleanup...")
-            cleanup_resources()
-            sys.exit(0)
+        # Only register signal handlers if we're in the main thread
+        import threading
+        if threading.current_thread() is threading.main_thread():
+            import signal
             
-        signal.signal(signal.SIGINT, signal_handler)
-        signal.signal(signal.SIGTERM, signal_handler)
-        
+            def signal_handler(sig, frame):
+                print(f"Received signal {sig}, running cleanup...")
+                # Create a new event loop if needed
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                cleanup_resources()
+                sys.exit(0)
+                
+            signal.signal(signal.SIGINT, signal_handler)
+            signal.signal(signal.SIGTERM, signal_handler)
+        else:
+            print("Not in main thread, skipping signal handler registration")
+            
     except Exception as e:
         print(f"Error setting up cleanup handlers: {e}")

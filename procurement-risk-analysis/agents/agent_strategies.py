@@ -390,7 +390,7 @@ class ChatbotTerminationStrategy(TerminationStrategy):
         if last_agent == REPORTING_AGENT:
             print("Reporting agent has responded - wait for completion")
             # Check if the response is substantial enough
-            if len(history[-1].content) > 200:  # Simple check for substantial content
+            if len(history[-1].content) > 3000:  # Simple check for substantial content
                 print("REPORTING_AGENT response is substantial, FORCING TERMINATION")
                 return True
         
@@ -676,20 +676,31 @@ class RateLimitedExecutor:
         self.requests_per_minute = requests_per_minute
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.request_times = []
+        self._lock = asyncio.Lock()
         
     async def execute_with_limit(self, func, *args, **kwargs):
         """Execute a function with rate limiting."""
         async with self.semaphore:
-            # Clean up old request times
-            current_time = time.time()
-            self.request_times = [t for t in self.request_times if current_time - t < 60]
-            
-            # Check if we need to wait
-            if len(self.request_times) >= self.requests_per_minute:
-                wait_time = 60 - (current_time - self.request_times[0])
-                if wait_time > 0:
-                    await asyncio.sleep(wait_time)
+            async with self._lock:
+                # Clean up old request times
+                current_time = time.time()
+                self.request_times = [t for t in self.request_times if current_time - t < 60]
+                
+                # Check if we need to wait
+                if len(self.request_times) >= self.requests_per_minute:
+                    wait_time = 60 - (current_time - self.request_times[0])
+                    if wait_time > 0:
+                        print(f"Rate limit wait: {wait_time:.2f} seconds")
+                        await asyncio.sleep(wait_time)
+                
+                # Record this request
+                self.request_times.append(time.time())
             
             # Execute the function
-            self.request_times.append(time.time())
-            return await func(*args, **kwargs)
+            try:
+                return await func(*args, **kwargs)
+            except Exception as e:
+                print(f"Error in rate-limited function: {e}")
+                import traceback
+                traceback.print_exc()
+                raise

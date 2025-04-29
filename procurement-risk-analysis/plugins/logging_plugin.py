@@ -36,28 +36,49 @@ class LoggingPlugin:
         """
         self._current_agent_id = agent_id
     
+    # In the LoggingPlugin class, improve thread ID handling:
     @kernel_function(description="Retrieve agent thread id")
     def log_agent_get_thread_id(self) -> str:
         """Retrieves the latest thread ID
-     
+    
         Returns:
             latest thread id
         """
         try:
             from config.settings import get_project_client
-            project_client = get_project_client()
-            thread_id = None
+            
+            try:
+                project_client = get_project_client()
+                thread_id = None
 
-            # Get the thread id
-            with project_client:
-                thread_id = project_client.agents.list_threads(limit=1).first_id
-                print(f"Thread ID: {thread_id}")
-            
-            return thread_id
-            
+                # Get the thread id
+                with project_client:
+                    try:
+                        threads_list = project_client.agents.list_threads(limit=1)
+                        if hasattr(threads_list, 'first_id'):
+                            thread_id = threads_list.first_id
+                        elif hasattr(threads_list, 'data') and threads_list.data:
+                            thread_id = threads_list.data[0].id
+                        else:
+                            # Handle different response formats
+                            threads_data = getattr(threads_list, 'data', None) or []
+                            if threads_data and len(threads_data) > 0:
+                                thread_id = threads_data[0].get('id')
+                        
+                        print(f"Thread ID: {thread_id}")
+                    except Exception as e:
+                        print(f"Error getting thread ID from client: {e}")
+                        return "thread_id_not_available"
+                
+                return thread_id or "thread_id_not_found"
+                
+            except Exception as e:
+                print(f"Error getting project client: {e}")
+                return "thread_id_not_available_client_error"
+                
         except Exception as e:
             print(f"Error getting thread ID: {e}")
-            return json.dumps({"error": str(e)})
+            return "thread_id_error"
     
     @kernel_function(description="Log the agent's thinking process")
     def log_agent_thinking(self, agent_name: str, thinking_stage: str, thought_content: str, 
@@ -68,6 +89,12 @@ class LoggingPlugin:
                         status: str = "success") -> str:
         """Logs the agent's thinking process to the database"""
         
+        # If thread_id is None, try to get it
+        if thread_id is None:
+            try:
+                thread_id = self.log_agent_get_thread_id()
+            except Exception as e:
+                print(f"Error getting thread ID: {e}")
         # Handle non-string thinking_stage_output
         if thinking_stage_output is not None and not isinstance(thinking_stage_output, str):
             try:

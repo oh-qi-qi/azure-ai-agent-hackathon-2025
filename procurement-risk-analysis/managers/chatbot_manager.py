@@ -5,6 +5,7 @@ import asyncio
 import json
 import re
 import os
+import pyodbc
 import time
 from datetime import datetime
 from dotenv import load_dotenv
@@ -42,19 +43,45 @@ load_dotenv()
 class ChatbotManager:
     """Manages the interactive chatbot for user queries."""
     
+    # In ChatbotManager.__init__:
     def __init__(self, connection_string):
         """Initialize the chatbot manager.
-    
+        
         Args:
             connection_string: The database connection string.
         """
         self.connection_string = connection_string
         
-        # Initialize plugins
-        self.schedule_plugin = EquipmentSchedulePlugin(connection_string)
-        self.risk_plugin = RiskCalculationPlugin()
-        self.logging_plugin = LoggingPlugin(connection_string)
-        self.report_file_plugin = ReportFilePlugin(connection_string)
+        # Initialize plugins with proper error handling
+        try:
+            self.schedule_plugin = EquipmentSchedulePlugin(connection_string)
+        except Exception as e:
+            print(f"Error initializing schedule plugin: {e}")
+            self.schedule_plugin = None
+            
+        try:
+            self.risk_plugin = RiskCalculationPlugin()
+        except Exception as e:
+            print(f"Error initializing risk plugin: {e}")
+            self.risk_plugin = None
+            
+        try:
+            self.logging_plugin = LoggingPlugin(connection_string)
+        except Exception as e:
+            print(f"Error initializing logging plugin: {e}")
+            self.logging_plugin = None
+            
+        try:
+            self.report_file_plugin = ReportFilePlugin(connection_string)
+        except Exception as e:
+            print(f"Error initializing report file plugin: {e}")
+            self.report_file_plugin = None
+            
+        try:
+            self.political_risk_json_plugin = PoliticalRiskJsonPlugin(connection_string)
+        except Exception as e:
+            print(f"Error initializing political risk JSON plugin: {e}")
+            self.political_risk_json_plugin = None
         
         # Session management
         self.chat_sessions = {}
@@ -82,8 +109,9 @@ class ChatbotManager:
             
             # Run the cleanup in the event loop
             if self.chat_sessions:
-                loop.run_until_complete(self.cleanup_all_sessions())
-                
+                # Use cleanup_sessions not cleanup_all_sessions
+                loop.run_until_complete(self.cleanup_sessions(max_age_minutes=0))
+                    
             # Cancel any tracked tasks
             for session_id, tasks in self._session_tasks.items():
                 for task in tasks:
@@ -91,78 +119,84 @@ class ChatbotManager:
                         task.cancel()
         except Exception as e:
             print(f"Error in destructor: {e}")
-    
+
     async def cleanup_all_sessions(self):
         """Cleanup all sessions."""
         session_ids = list(self.chat_sessions.keys())
         for session_id in session_ids:
             await self.close_session(session_id)
     
+    # Improve reset_chat_activity in chatbot_manager.py:
     async def reset_chat_activity(self, chat):
-        """Reset a chat's activity state to allow it to be used again.
-        
-        Args:
-            chat: The chat object to reset
-                
-        Returns:
-            bool: True if reset was successful
-        """
+        """Reset a chat's activity state to allow it to be used again."""
         print("Resetting chat activity...")
         
-        # Reset internal state variables
-        if hasattr(chat, '_current_agent'):
-            chat._current_agent = None
-            print("Reset _current_agent")
-            
-        if hasattr(chat, '_current_chat_task'):
-            # Cancel the task if it's running
-            if chat._current_chat_task and not chat._current_chat_task.done():
-                chat._current_chat_task.cancel()
-                print("Cancelled _current_chat_task")
-            chat._current_chat_task = None
-            
-        if hasattr(chat, '_current_chat_complete'):
-            chat._current_chat_complete = False
-            print("Reset _current_chat_complete to False")
-        
-        # Reset _is_active flag if it exists
-        if hasattr(chat, '_is_active'):
-            chat._is_active = False
-            print("Reset _is_active to False")
-        
-        # Reset turn counter
-        if hasattr(chat, '_current_turn'):
-            chat._current_turn = 0
-            print("Reset _current_turn to 0")
-            
-        # CRITICAL: Reset termination strategy state
-        if hasattr(chat, 'termination_strategy'):
-            if hasattr(chat.termination_strategy, 'reset') and callable(chat.termination_strategy.reset):
-                chat.termination_strategy.reset()
-                print("Called termination_strategy.reset()")
-            else:
-                # Manual reset of termination strategy state
-                if hasattr(chat.termination_strategy, '_already_terminated'):
-                    chat.termination_strategy._already_terminated = False
-                    print("Reset _already_terminated to False")
-                    
-                if hasattr(chat.termination_strategy, '_start_time'):
-                    chat.termination_strategy._start_time = time.time()
-                    print("Reset _start_time")
-                    
-                if hasattr(chat.termination_strategy, '_agent_start_times'):
-                    chat.termination_strategy._agent_start_times = {}
-                    print("Reset _agent_start_times")
-                    
-                if hasattr(chat.termination_strategy, '_termination_count'):
-                    chat.termination_strategy._termination_count = 0
-                    print("Reset _termination_count to 0")
-        
-        # Make sure the event loop has a chance to process other tasks
-        await asyncio.sleep(0)
+        try:
+            # Reset internal state variables
+            if hasattr(chat, '_current_agent'):
+                chat._current_agent = None
+                print("Reset _current_agent")
                 
-        print("Chat activity state has been fully reset")
-        return True
+            if hasattr(chat, '_current_chat_task'):
+                # Cancel the task if it's running
+                if chat._current_chat_task and not chat._current_chat_task.done():
+                    try:
+                        chat._current_chat_task.cancel()
+                        print("Cancelled _current_chat_task")
+                    except Exception as e:
+                        print(f"Error cancelling chat task: {e}")
+                chat._current_chat_task = None
+                
+            if hasattr(chat, '_current_chat_complete'):
+                chat._current_chat_complete = False
+                print("Reset _current_chat_complete to False")
+            
+            # Reset _is_active flag if it exists
+            if hasattr(chat, '_is_active'):
+                chat._is_active = False
+                print("Reset _is_active to False")
+            
+            # Reset turn counter
+            if hasattr(chat, '_current_turn'):
+                chat._current_turn = 0
+                print("Reset _current_turn to 0")
+                
+            # CRITICAL: Reset termination strategy state
+            if hasattr(chat, 'termination_strategy'):
+                if hasattr(chat.termination_strategy, 'reset') and callable(chat.termination_strategy.reset):
+                    try:
+                        chat.termination_strategy.reset()
+                        print("Called termination_strategy.reset()")
+                    except Exception as e:
+                        print(f"Error resetting termination strategy: {e}")
+                else:
+                    # Manual reset of termination strategy state
+                    if hasattr(chat.termination_strategy, '_already_terminated'):
+                        chat.termination_strategy._already_terminated = False
+                        print("Reset _already_terminated to False")
+                        
+                    if hasattr(chat.termination_strategy, '_start_time'):
+                        chat.termination_strategy._start_time = time.time()
+                        print("Reset _start_time")
+                        
+                    if hasattr(chat.termination_strategy, '_agent_start_times'):
+                        chat.termination_strategy._agent_start_times = {}
+                        print("Reset _agent_start_times")
+                        
+                    if hasattr(chat.termination_strategy, '_termination_count'):
+                        chat.termination_strategy._termination_count = 0
+                        print("Reset _termination_count to 0")
+            
+            # Make sure the event loop has a chance to process other tasks
+            await asyncio.sleep(0)
+                    
+            print("Chat activity state has been fully reset")
+            return True
+        except Exception as e:
+            print(f"Error resetting chat activity: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
 
     async def initialize_session(self, session_id):
         """Initialize or reuse a chat session.
@@ -1433,7 +1467,7 @@ class ChatbotManager:
             latest_responses: Dictionary to store the latest responses
             session_id: The session ID
             cancellation_token: Cancellation token
-            
+                
         Returns:
             The risk agent response or None if timeout/error
         """
@@ -1461,6 +1495,8 @@ class ChatbotManager:
         try:
             # Create a task to get risk agent response with timeout
             async def get_response():
+                interim_message_received = False
+                
                 async for response in chat.invoke():
                     # Check for cancellation
                     if cancellation_token and cancellation_token.done():
@@ -1468,47 +1504,70 @@ class ChatbotManager:
                         return
                             
                     if response and hasattr(response, 'name') and response.name == risk_type:
-                        latest_responses[risk_type] = response
                         risk_content = response.content
                         
-                        # Store the standard output in the event log
-                        await self._store_agent_output(
-                            session_id=session_id,
-                            agent_name=risk_type,
-                            agent_output=risk_content,
-                            action="Complete Analysis"
-                        )
+                        # Check if this is an interim "loading" message
+                        if len(risk_content) < 300 and ("will provide" in risk_content.lower() or 
+                                                    "analyzing" in risk_content.lower() or
+                                                    "working on" in risk_content.lower() or
+                                                    "processing" in risk_content.lower()):
+                            print(f"Received interim message from {risk_type}, continuing to wait for full response")
+                            interim_message_received = True
+                            
+                            # Store the interim message but continue waiting
+                            latest_responses[f"{risk_type}_interim"] = response
+                            
+                            # Store the interim message in the event log
+                            await self._store_agent_output(
+                                session_id=session_id,
+                                agent_name=f"{risk_type}_interim",
+                                agent_output=risk_content,
+                                action="Interim Response"
+                            )
+                            
+                            # Don't process JSON data for interim messages
+                            continue
                         
-                        # Special handling for political risk agent
-                        if risk_type == POLITICAL_RISK_AGENT:
-                            try:
-                                # Find the political risk JSON plugin
-                                political_risk_json_plugin = None
-                                if "agents" in self.chat_sessions[session_id]:
-                                    political_agent = self.chat_sessions[session_id]["agents"].get(POLITICAL_RISK_AGENT)
-                                    if political_agent:
-                                        for plugin in political_agent.plugins:
-                                            if isinstance(plugin, PoliticalRiskJsonPlugin):
-                                                political_risk_json_plugin = plugin
-                                                break
-                                
-                                if political_risk_json_plugin:
-                                    # Use the plugin to convert and store JSON data
-                                    result = await political_risk_json_plugin.store_political_json_output_agent_event(
-                                        risk_content,
-                                        POLITICAL_RISK_AGENT,
-                                        self.chat_sessions[session_id]["conversation_id"],
-                                        session_id
-                                    )
-                                    print(f"Stored political risk JSON using plugin: {result}")
-                                else:
-                                    print("Political risk JSON plugin not found")
-                            except Exception as e:
-                                print(f"Error processing political risk JSON: {e}")
-                                import traceback
-                                traceback.print_exc()
-                        
-                        return
+                        # If we've received an interim message and now have a substantial response
+                        # or if this is just a substantial response directly
+                        if interim_message_received or len(risk_content) > 300:
+                            latest_responses[risk_type] = response
+                            
+                            # Store the standard output in the event log
+                            await self._store_agent_output(
+                                session_id=session_id,
+                                agent_name=risk_type,
+                                agent_output=risk_content,
+                                action="Complete Analysis"
+                            )
+                            
+                            # Special handling for political risk agent
+                            if risk_type == POLITICAL_RISK_AGENT:
+                                try:
+                                    # Use the political risk JSON plugin without await
+                                    political_risk_json_plugin = self.political_risk_json_plugin
+                                    
+                                    if political_risk_json_plugin:
+                                        try:
+                                            result = political_risk_json_plugin.store_political_json_output_agent_event(
+                                                risk_content,
+                                                POLITICAL_RISK_AGENT,
+                                                self.chat_sessions[session_id]["conversation_id"],
+                                                session_id
+                                            )
+                                            print(f"Stored political risk JSON using plugin: {result}")
+                                        except Exception as json_e:
+                                            print(f"Error storing political risk JSON data: {json_e}")
+                                            import traceback
+                                            traceback.print_exc()
+                                    else:
+                                        print("Political risk JSON plugin not found")
+                                except Exception as e:
+                                    print(f"Error processing political risk JSON: {e}")
+                                    import traceback
+                                    traceback.print_exc()
+                            
+                            return
             
             # Add retry logic for risk agent
             retry_count = 0
@@ -1534,6 +1593,17 @@ class ChatbotManager:
                         await asyncio.sleep(1)  # Brief pause before retry
                     else:
                         print(f"Risk agent {risk_type} timed out after {risk_timeout} seconds and {max_retries} retries")
+                except Exception as e:
+                    retry_count += 1
+                    print(f"Error in risk agent {risk_type}: {e}")
+                    
+                    if retry_count <= max_retries:
+                        print(f"Retrying {retry_count}/{max_retries}...")
+                        await asyncio.sleep(1)  # Brief pause before retry
+                    else:
+                        print(f"Risk agent {risk_type} failed after {max_retries} retries")
+                        import traceback
+                        traceback.print_exc()
                 finally:
                     # Clean up the task reference
                     if session_id in self._session_tasks and risk_task in self._session_tasks[session_id]:
@@ -1544,7 +1614,14 @@ class ChatbotManager:
             import traceback
             traceback.print_exc()
         
-        return latest_responses.get(risk_type)
+        # Return the most substantial response available
+        if risk_type in latest_responses:
+            return latest_responses[risk_type]
+        elif f"{risk_type}_interim" in latest_responses:
+            print(f"Returning interim response for {risk_type} as final response")
+            return latest_responses[f"{risk_type}_interim"]
+        
+        return None
 
     async def _get_reporting_agent_response(self, chat, risk_type, latest_responses, session_id, cancellation_token):
         """Get the reporting agent's response and store it in the event log.

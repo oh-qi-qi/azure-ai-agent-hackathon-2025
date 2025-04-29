@@ -1,6 +1,7 @@
 """Plugin for converting political risk output to standardized JSON."""
 
 import json
+import uuid
 import re
 import pyodbc
 from datetime import datetime
@@ -116,22 +117,13 @@ class PoliticalRiskJsonPlugin:
                 "timestamp": datetime.now().isoformat()
             })
     
+
     @kernel_function(description="Store political risk JSON in agent event log")
     def store_political_json_output_agent_event(self, risk_analysis: str, 
-                                              agent_name: str, 
-                                              conversation_id: str, 
-                                              session_id: str) -> str:
-        """Store political risk JSON in agent event log.
-        
-        Args:
-            risk_analysis: The complete risk analysis text to convert to JSON
-            agent_name: The name of the agent (typically POLITICAL_RISK_AGENT)
-            conversation_id: The conversation ID
-            session_id: The session ID
-            
-        Returns:
-            str: JSON string with the result
-        """
+                                            agent_name: str, 
+                                            conversation_id: str, 
+                                            session_id: str) -> str:
+        """Store political risk JSON in agent event log."""
         try:
             if not self.connection_string:
                 return json.dumps({"error": "No database connection string provided"})
@@ -150,7 +142,7 @@ class PoliticalRiskJsonPlugin:
             cursor.execute("""
                 INSERT INTO dim_agent_event_log 
                 (event_id, agent_name, event_time, action, result_summary, 
-                 user_query, agent_output, conversation_id, session_id)
+                user_query, agent_output, conversation_id, session_id)
                 VALUES
                 (?, ?, GETDATE(), ?, ?, NULL, ?, ?, ?)
             """, (
@@ -183,7 +175,7 @@ class PoliticalRiskJsonPlugin:
                 "error": str(e),
                 "message": "Failed to store political risk JSON in event log"
             })
-    
+
     @kernel_function(description="Extract citations from political risk analysis")
     def extract_citations(self, risk_analysis: str) -> str:
         """Extract citations from political risk analysis.
