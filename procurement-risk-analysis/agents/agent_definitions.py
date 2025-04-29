@@ -170,7 +170,7 @@ Follow this exact workflow:
 4. CRITICAL: FOR BING SEARCH - Follow these simplified steps:
    a. Call log_agent_thinking with thinking_stage="bing_search_attempt"
    b. Extract the search query from the scheduler's JSON under "searchQuery.political"
-   c. Perform ONLY ONE search using this exact query without modifications
+   c. Perform bing search with the search query
    d. Call log_agent_thinking with thinking_stage="bing_search_results" and include the search results
    e. Ensure you collect sufficient information for at least 5 political risk entries
    f. Save all search results for analysis
