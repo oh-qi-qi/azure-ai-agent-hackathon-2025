@@ -1875,7 +1875,7 @@ class ChatbotManager:
         return json.dumps(simplified_data, indent=2)
     
     async def _get_risk_agent_response(self, chat, risk_type, structured_data, latest_responses, session_id, cancellation_token):
-        """Get a risk agent's response and store it in the event log, with special handling for political risk.
+        """Get a risk agent's response with special handling for political risk citations.
         
         Args:
             chat: The chat object
@@ -1905,6 +1905,31 @@ class ChatbotManager:
         
         # Reset chat activity if needed
         await self.reset_chat_activity(chat)
+        
+        # Try to get the thread ID for political risk agent
+        thread_id = None
+        if risk_type == POLITICAL_RISK_AGENT:
+            try:
+                # Try various ways to get the thread ID
+                if hasattr(chat, '_thread_id'):
+                    thread_id = chat._thread_id
+                elif hasattr(chat, 'thread_id'):
+                    thread_id = chat.thread_id
+                else:
+                    # Try to get it from the logging plugin
+                    logging_plugin = self.logging_plugin
+                    if logging_plugin:
+                        thread_id_result = logging_plugin.log_agent_get_thread_id()
+                        if thread_id_result and thread_id_result != "thread_id_not_available":
+                            thread_id = thread_id_result
+                
+                if thread_id:
+                    print(f"Found thread ID for political risk agent: {thread_id}")
+                    # Store the thread ID in the session
+                    if session_id in self.chat_sessions:
+                        self.chat_sessions[session_id]['political_risk_thread_id'] = thread_id
+            except Exception as e:
+                print(f"Error getting thread ID for political risk agent: {e}")
         
         # Risk agent response timeout
         risk_timeout = 420  # seconds
@@ -1961,7 +1986,7 @@ class ChatbotManager:
                             # Special handling for political risk agent
                             if risk_type == POLITICAL_RISK_AGENT:
                                 try:
-                                    # Use the political risk JSON plugin without await
+                                    # Use the political risk JSON plugin
                                     political_risk_json_plugin = self.political_risk_json_plugin
                                     
                                     if political_risk_json_plugin:
@@ -1979,6 +2004,24 @@ class ChatbotManager:
                                             traceback.print_exc()
                                     else:
                                         print("Political risk JSON plugin not found")
+                                        
+                                    # If we have a thread ID, get citations
+                                    if thread_id:
+                                        try:
+                                            # Get citations after a brief delay to ensure they're available
+                                            await asyncio.sleep(1)
+                                            citations = await self._get_citations_from_thread(thread_id)
+                                            if citations:
+                                                print(f"Found {len(citations)} citations in political risk response")
+                                                
+                                                # Store the citations in the session
+                                                if session_id in self.chat_sessions:
+                                                    self.chat_sessions[session_id]['political_risk_citations'] = citations
+                                                    print(f"Stored {len(citations)} citations in session {session_id}")
+                                        except Exception as citation_err:
+                                            print(f"Error getting citations: {citation_err}")
+                                            import traceback
+                                            traceback.print_exc()
                                 except Exception as e:
                                     print(f"Error processing political risk JSON: {e}")
                                     import traceback
@@ -3484,3 +3527,48 @@ class ChatbotManager:
             # Clean up session tasks if they exist
             if session_id in self._session_tasks:
                 del self._session_tasks[session_id]
+
+    async def _get_citations_from_thread(self, thread_id):
+        """Get citations from a thread.
+        
+        Args:
+            thread_id: The thread ID from Azure AI Projects
+        
+        Returns:
+            list: List of citation dictionaries
+        """
+        try:
+            # Get the project client
+            from config.settings import get_project_client
+            project_client = get_project_client()
+            
+            if not project_client:
+                print("Failed to get project client")
+                return []
+            
+            # Get the response message from the thread
+            response_messages = project_client.agents.list_messages(thread_id=thread_id)
+            response_message = response_messages.get_last_message_by_role("assistant")
+            
+            if not response_message:
+                print("No response message found")
+                return []
+            
+            # Extract citations
+            citations = []
+            if hasattr(response_message, 'url_citation_annotations') and response_message.url_citation_annotations:
+                for annotation in response_message.url_citation_annotations:
+                    citation = {
+                        "title": annotation.url_citation.title,
+                        "url": annotation.url_citation.url,
+                        "source": "Bing Search"  # Default source name
+                    }
+                    citations.append(citation)
+            
+            return citations
+            
+        except Exception as e:
+            print(f"Error getting citations from thread: {e}")
+            import traceback
+            traceback.print_exc()
+            return []

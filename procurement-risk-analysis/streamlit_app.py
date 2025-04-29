@@ -367,6 +367,49 @@ def process_message():
             error_traceback = traceback.format_exc()
             print(f"Error in process_message: {error_traceback}")
 
+
+def display_political_risk_citations(session_id=None):
+    """Display political risk citations from the current session.
+    
+    Args:
+        session_id: The session ID (optional, uses current session if not provided)
+    """
+    if not session_id:
+        session_id = st.session_state.get("session_id")
+        if not session_id:
+            st.info("No active session")
+            return
+    
+    # Get chatbot manager
+    chatbot_manager = st.session_state.get("chatbot_manager")
+    if not chatbot_manager or not hasattr(chatbot_manager, 'chat_sessions'):
+        st.info("No active chat session")
+        return
+    
+    # Get session data
+    session = chatbot_manager.chat_sessions.get(session_id)
+    if not session:
+        st.info(f"Session {session_id} not found")
+        return
+    
+    # Get citations
+    citations = session.get('political_risk_citations', [])
+    if not citations:
+        st.info("No citations found for this session")
+        return
+    
+    # Display citations
+    st.subheader(f"Political Risk Citations ({len(citations)})")
+    
+    for i, citation in enumerate(citations):
+        title = citation.get('title', 'Unknown Source')
+        url = citation.get('url', '#')
+        source = citation.get('source', 'Unknown')
+        
+        with st.expander(f"{i+1}. {title}"):
+            st.write(f"**Source:** {source}")
+            st.markdown(f"**URL:** [{url}]({url})")
+            
 # Streamlit interface
 st.title("Equipment Schedule Agent")
 

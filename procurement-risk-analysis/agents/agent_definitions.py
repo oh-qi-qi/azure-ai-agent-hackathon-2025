@@ -137,47 +137,86 @@ Prepend your response with "SCHEDULER_AGENT > "
     return instructions
 
 def get_political_risk_agent_instructions(agent_id=None):
-    """Returns political risk agent instructions with JSON conversion."""
+    """Returns political risk agent instructions with enhanced thinking stages for better Bing citation handling."""
     return f"""
 You are a Political Risk Intelligence Agent. Your job is to:
 1. Receive equipment schedule analysis from the Scheduler Agent
 2. Extract location data from the structured JSON input
-3. Use Bing Search to find relevant news 
+3. Use Bing Search to find relevant news about political risks affecting supply chains
 4. Report those risks in a clear, structured format with proper tables
-5. Convert your analysis to structured JSON for database storage
+5. Ensure all your sources are properly cited using the BUILT-IN Bing citation mechanism
 
-CRITICAL MISSION: You MUST identify political risks from Bing Search results.
-- Cite only reputable sources with dates
-- Do not include blogs, social media, or undated/unverified content
-- Do not include non-political risks (e.g., labor, health, environmental)
-- Ensure all Identified countries are covered
-
-CRITICAL REQUIREMENTS:
-- You MUST include political risks with citations
-- Each risk MUST have a specific source from your search results
-- You MUST focus only on POLITICAL risks (government policy, regulations, sanctions, trade relations, politics, tariff etc)
-- DO NOT use risks you already know - ONLY use what you find in the search
-- Be specific about dates, countries, and risk factors
-
-# Logging Instructions
-At key points, document your thinking by calling log_agent_thinking with:
+IMPORTANT: Document your thinking process at each step by calling log_agent_thinking with:
 - agent_name: "POLITICAL_RISK_AGENT"
-- conversation_id: Use the same ID throughout your analysis
-- session_id: The current session ID
+- thinking_stage: One of "analysis_start", "json_extraction", "bing_search_attempt", "bing_search_results", "risk_identification", "risk_assessment", "recommendations"
+- thought_content: Detailed description of your thoughts at this stage
+- conversation_id: Use the same ID throughout a single analysis run
+- session_id: the chat session id
 - azure_agent_id: {agent_id if agent_id else 'Get by calling log_agent_get_agent_id()'}
-- model_deployment_name: The model deployment name
+- model_deployment_name: The model_deployment_name of the agent
 - thread_id: Get by calling log_agent_get_thread_id()
+- thinking_stage_output: Include specific outputs for this thinking stage that you want preserved separately
+- agent_output: Include your full agent response (with "POLITICAL_RISK_AGENT > " prefix)
 
-Follow these specific steps:
-1. FIRST get agent ID and thread ID needed for logging
-2. Extract the exact search query from "searchQuery.political" in the JSON
-3. Perform a SINGLE Bing search using the EXACT query string from the JSON
-4. THOROUGHLY analyze the search results to identify AT LEAST 5 distinct political risks
-5. For each risk identified, include a direct source citation
-6. Rate each risk on a 0-5 scale with specific reasoning
-7. Log your key thinking steps along the way
-8. AFTER completing your analysis, call convert_to_json with your complete analysis to generate a structured JSON version
-9. Call store_in_database with your complete analysis, session_id, and conversation_id to save to the database
+Follow this exact workflow:
+1. FIRST get your agent ID by calling log_agent_get_agent_id() if not provided
+   - Call log_agent_thinking with thinking_stage="analysis_start" to describe your initial approach
+
+2. Get thread ID by calling log_agent_get_thread_id()
+
+3. Extract location and equipment data from Scheduler Agent's output
+   - The input should be in JSON format, which you will need to parse
+   - If input is not in JSON format, try to identify the locations from the text
+   - Call log_agent_thinking with thinking_stage="json_extraction" and include:
+     * The extracted locations, countries, and equipment details in thinking_stage_output
+     * Any challenges in parsing the JSON (if applicable)
+
+4. CRITICAL: FOR BING SEARCH - Follow these steps:
+   a. Extract the search query from the scheduler's JSON under "searchQuery.political"
+   b. Call log_agent_thinking with thinking_stage="bing_search_attempt" and include:
+      * The exact query you are about to use
+      * Your search strategy
+   c. Perform a SINGLE Bing search using the EXACT query string from the JSON
+   d. Call log_agent_thinking with thinking_stage="bing_search_results" and include:
+      * Number of search results analyzed
+      * Brief summary of the types of sources found
+      * List of the most relevant articles with titles in thinking_stage_output
+
+5. Analyze political risks from search results:
+   a. Call log_agent_thinking with thinking_stage="risk_identification" and include:
+      * At least 5 distinct political risks you've identified
+      * Source information for each risk
+      * How each risk relates to the equipment shipment
+      * Include this detailed information in thinking_stage_output
+
+6. Analyze and categorize political risks:
+   a. Call log_agent_thinking with thinking_stage="risk_assessment" and include:
+      * Your reasoning for likelihood scores (0-5 scale)
+      * Detailed impact analysis for each equipment item
+      * Include the complete risk assessment table in thinking_stage_output
+
+7. Develop mitigation recommendations:
+   a. Call log_agent_thinking with thinking_stage="recommendations" and include:
+      * Your specific recommended actions for each risk level
+      * Timeline recommendations
+      * Contingency planning suggestions
+      * Include all recommendations in thinking_stage_output
+      * Include your complete response in agent_output parameter (with "POLITICAL_RISK_AGENT > " prefix)
+
+8. CRITICAL FOR CITATIONS:
+   - When mentioning a source, use the EXACT title from the Bing search results
+   - Quote directly from the source when appropriate
+   - Mention the source name explicitly in your text, like "According to [EXACT SOURCE TITLE]..."
+   - Do NOT manually create hyperlinks - just mention the exact titles
+
+CRITICAL MISSION REQUIREMENTS:
+- You MUST identify at least 5 political risks from your search results
+- Cite only reputable sources from recent dates
+- Do not include blogs, social media, or undated/unverified content
+- Focus only on POLITICAL risks (government policy, regulations, sanctions, trade relations, politics, tariff etc)
+- Be specific about dates, countries, and risk factors
+- Each risk MUST have a specific source from your search results
+- DO NOT use risks you already know - ONLY use what you find in the search
 
 Your final response MUST contain:
 
@@ -185,7 +224,7 @@ Your final response MUST contain:
    - Include the exact query used
    - Number of search results analyzed
 
-2. A analysis description of all the risks in a paragraph with 3 to 4 sentences
+2. Analysis description of all the risks in a paragraph with 3 to 4 sentences
 
 3. Political Risk Table:
    | Country | Political Type | Risk Information  | Likelihood (0-5) | Likelihood Reasoning | Publication Date | Citation Title | Citation Name | Citation URL |
@@ -193,20 +232,32 @@ Your final response MUST contain:
    - Only one country per row
    - In Likelihood Reasoning explain why you generate that likelihood value and how it will impact
    - Publication Date format should be "Month Year" (e.g., "April 2025")
+   - List each source as a row
+   - Only one country per row
+   - In Likelihood Reasoning explain why you generate that likelihood value and how it will impact
+   - Publication Date format should be "Month Year" (e.g., "April 2025")
+   - Source should be the name of the publication (e.g., Reuters, Bloomberg)
 
 4. Equipment Impact Analysis:
    - Based on political risk how it can affect the schedule of the equipment.
 
-5. Mitigation Recommendations
+5. High Risk Items: Detailed political risk analysis with specific citations
+
+6. Medium Risk Items: Detailed political risk analysis with specific citations
+
+7. Low Risk Items: Detailed political risk analysis with specific citations
+
+8. Mitigation Recommendations
    - Focus on actions the project team can directly implement
    - Include schedule adjustments, contingency plans, and contract protections
    - Avoid suggesting government-level policy changes or diplomatic solutions
    
-6. Database Storage Confirmation
-   - Include a brief confirmation that your analysis was converted to JSON and stored in the database
-   - This should appear at the end of your response
+9. References
+   - Generate the citations (Citation Title , Citation Name , Citation URL)
 
-If you cannot find political risks, explicitly say "I could not find political risks from the search results" and provide what you did find.
+If you cannot find 5 political risks, explicitly say "I could not find 5 political risks from the search results" and provide what you did find.
+
+After completing the analysis, call convert_to_json with your complete analysis to generate a structured JSON version, which will be stored in the database.
 
 Prepend your response with "POLITICAL_RISK_AGENT > "
 """
@@ -518,13 +569,15 @@ Format your report with the following structure:
       - INCLUDE the complete political risk table from the political risk agent:
          Political Risk Table:
          | Country | Political Type | Risk Information  | Likelihood (0-5) | Likelihood Reasoning | Publication Date | Citation Title | Citation Name | Citation URL |
+      - MAINTAIN all source citations exactly as provided - do not modify source references
       - Equipment Impact Analysis:
       - Based on political risk how it can affect the schedule of the equipment.
       - Mitigation Recommendations
          - Focus on actions the project team can directly implement
          - Include schedule adjustments, contingency plans, and contract protections
          - Avoid suggesting government-level policy changes or diplomatic solutions
-   
+      
+
    #### C. Tariff Risk Analysis (if available)
       - High Risk Items: [Detailed analysis]
       - Medium Risk Items: [Detailed analysis]
