@@ -13,104 +13,101 @@ class LoggingPlugin:
         self.connection_string = connection_string
         # Store agent ID in memory once retrieved
         self._current_agent_id = None
+        self._current_thread_id = None
     
     @kernel_function(description="Get the current agent's ID")
     def log_agent_get_agent_id(self) -> str:
-        """Retrieves the current agent's ID from context
+        """Retrieves the current agent's ID from context.
         
         Returns:
-            The current agent's ID
+            The current agent's ID or a placeholder if not available
         """
-        # If agent ID is already set, return it
-        if self._current_agent_id:
-            return self._current_agent_id
-        
-        # Otherwise, return placeholder
-        return "AGENT_ID_NOT_SET"
+        try:
+            # If agent ID is already set, return it
+            if self._current_agent_id:
+                return self._current_agent_id
+            
+            # Otherwise, return placeholder
+            return "AGENT_ID_NOT_SET"
+        except Exception as e:
+            print(f"Error in log_agent_get_agent_id: {e}")
+            return "AGENT_ID_ERROR"
     
     def set_agent_id(self, agent_id: str):
-        """Sets the current agent ID
+        """Sets the current agent ID.
         
         Args:
             agent_id: The ID to set
         """
-        self._current_agent_id = agent_id
+        try:
+            self._current_agent_id = agent_id
+        except Exception as e:
+            print(f"Error in set_agent_id: {e}")
     
-    # In the LoggingPlugin class, improve thread ID handling:
     @kernel_function(description="Retrieve agent thread id")
     def log_agent_get_thread_id(self) -> str:
-        """Retrieves the latest thread ID
+        """Retrieves the latest thread ID.
     
         Returns:
-            latest thread id
+            latest thread id or a placeholder if not available
         """
         try:
-            from config.settings import get_project_client
-            
+            # If thread ID is already cached, return it
+            if self._current_thread_id:
+                return self._current_thread_id
+                
+            # Try to get it from the project client
             try:
-                project_client = get_project_client()
-                thread_id = None
-
-                # Get the thread id
-                with project_client:
-                    try:
-                        threads_list = project_client.agents.list_threads(limit=1)
-                        if hasattr(threads_list, 'first_id'):
-                            thread_id = threads_list.first_id
-                        elif hasattr(threads_list, 'data') and threads_list.data:
-                            thread_id = threads_list.data[0].id
-                        else:
-                            # Handle different response formats
-                            threads_data = getattr(threads_list, 'data', None) or []
-                            if threads_data and len(threads_data) > 0:
-                                thread_id = threads_data[0].get('id')
-                        
-                        print(f"Thread ID: {thread_id}")
-                    except Exception as e:
-                        print(f"Error getting thread ID from client: {e}")
-                        return "thread_id_not_available"
+                from config.settings import get_project_client
                 
-                return thread_id or "thread_id_not_found"
-                
-            except Exception as e:
-                print(f"Error getting project client: {e}")
-                return "thread_id_not_available_client_error"
+                try:
+                    project_client = get_project_client()
+                    thread_id = None
+    
+                    # Get the thread id
+                    with project_client:
+                        try:
+                            threads_list = project_client.agents.list_threads(limit=1)
+                            if hasattr(threads_list, 'first_id'):
+                                thread_id = threads_list.first_id
+                            elif hasattr(threads_list, 'data') and threads_list.data:
+                                thread_id = threads_list.data[0].id
+                            else:
+                                # Handle different response formats
+                                threads_data = getattr(threads_list, 'data', None) or []
+                                if threads_data and len(threads_data) > 0:
+                                    thread_id = threads_data[0].get('id')
+                            
+                            print(f"Thread ID: {thread_id}")
+                            
+                            # Cache the thread ID for future use
+                            if thread_id:
+                                self._current_thread_id = thread_id
+                        except Exception as e:
+                            print(f"Error getting thread ID from client: {e}")
+                            return "thread_id_not_available"
+                    
+                    return thread_id or "thread_id_not_found"
+                    
+                except Exception as e:
+                    print(f"Error getting project client: {e}")
+                    return "thread_id_not_available_client_error"
+            except ImportError:
+                print("Could not import get_project_client")
+                return "thread_id_import_error"
                 
         except Exception as e:
             print(f"Error getting thread ID: {e}")
             return "thread_id_error"
     
-    @kernel_function(description="Log the agent's thinking process")
+    @kernel_function(description="Log the agent's thinking process with improved error handling")
     def log_agent_thinking(self, agent_name: str, thinking_stage: str, thought_content: str, 
                         conversation_id: str = None, session_id: str = None, 
                         azure_agent_id: str = None, model_deployment_name: str = None,
                         thread_id: str = None, user_query: str = None, 
                         agent_output: str = None, thinking_stage_output: str = None,
                         status: str = "success") -> str:
-        """Logs the agent's thinking process to the database"""
-        
-        # If thread_id is None, try to get it
-        if thread_id is None:
-            try:
-                thread_id = self.log_agent_get_thread_id()
-            except Exception as e:
-                print(f"Error getting thread ID: {e}")
-        # Handle non-string thinking_stage_output
-        if thinking_stage_output is not None and not isinstance(thinking_stage_output, str):
-            try:
-                thinking_stage_output = json.dumps(thinking_stage_output)
-            except Exception:
-                # Fallback to string conversion if JSON serialization fails
-                thinking_stage_output = str(thinking_stage_output)
-        
-        # Handle non-string agent_output
-        if agent_output is not None and not isinstance(agent_output, str):
-            try:
-                agent_output = json.dumps(agent_output)
-            except Exception:
-                # Fallback to string conversion if JSON serialization fails
-                agent_output = str(agent_output)
-        """Logs the agent's thinking process to the database
+        """Logs the agent's thinking process to the database with improved error handling.
         
         Args:
             agent_name: Name of the agent (e.g., SCHEDULER_AGENT)
@@ -130,36 +127,110 @@ class LoggingPlugin:
             JSON string with the result of the logging operation
         """
         try:
+            import json
+            import uuid
+            import pyodbc
+            
             # Generate conversation_id if not provided
             if not conversation_id:
                 conversation_id = str(uuid.uuid4())
             
-            # Connect to database
-            conn = pyodbc.connect(self.connection_string)
-            cursor = conn.cursor()
+            # If thread_id is None, try to get it - with error handling
+            if thread_id is None:
+                try:
+                    thread_id = self.log_agent_get_thread_id()
+                except Exception as e:
+                    print(f"Error getting thread ID: {e}")
+                    thread_id = "thread_id_retrieval_error"
             
-            # Execute insert query - NOTE: Order matches exactly with table definition
-            cursor.execute("""
-                INSERT INTO dim_agent_thinking_log
-                (agent_name, thinking_stage, thought_content, thinking_stage_output, agent_output, 
-                conversation_id, session_id, azure_agent_id, model_deployment_name, thread_id,
-                user_query, status, created_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE())
-            """, (agent_name, thinking_stage, thought_content, thinking_stage_output, agent_output, 
-                  conversation_id, session_id, azure_agent_id, model_deployment_name, thread_id,
-                  user_query, status))
+            # If azure_agent_id is None or "Get by calling log_agent_get_agent_id()", try to get it
+            if azure_agent_id is None or azure_agent_id == "Get by calling log_agent_get_agent_id()":
+                try:
+                    azure_agent_id = self.log_agent_get_agent_id()
+                except Exception as e:
+                    print(f"Error getting agent ID: {e}")
+                    azure_agent_id = "agent_id_retrieval_error"
             
-            # Commit and close connection
-            conn.commit()
-            cursor.close()
-            conn.close()
+            # Handle non-string thinking_stage_output
+            if thinking_stage_output is not None and not isinstance(thinking_stage_output, str):
+                try:
+                    thinking_stage_output = json.dumps(thinking_stage_output)
+                except Exception:
+                    # Fallback to string conversion if JSON serialization fails
+                    thinking_stage_output = str(thinking_stage_output)
             
-            return json.dumps({"success": True, "conversation_id": conversation_id})
+            # Handle non-string agent_output
+            if agent_output is not None and not isinstance(agent_output, str):
+                try:
+                    agent_output = json.dumps(agent_output)
+                except Exception:
+                    # Fallback to string conversion if JSON serialization fails
+                    agent_output = str(agent_output)
             
+            # Truncate fields that might be too long for the database
+            max_text_length = 50000  # Example limit, adjust based on your database field sizes
+            
+            if thought_content and len(thought_content) > max_text_length:
+                thought_content = thought_content[:max_text_length] + "... [TRUNCATED]"
+                
+            if thinking_stage_output and len(thinking_stage_output) > max_text_length:
+                thinking_stage_output = thinking_stage_output[:max_text_length] + "... [TRUNCATED]"
+                
+            if agent_output and len(agent_output) > max_text_length:
+                agent_output = agent_output[:max_text_length] + "... [TRUNCATED]"
+            
+            try:
+                # Connect to database
+                conn = pyodbc.connect(self.connection_string)
+                cursor = conn.cursor()
+                
+                # Execute insert query - NOTE: Order matches exactly with table definition
+                cursor.execute("""
+                    INSERT INTO dim_agent_thinking_log
+                    (agent_name, thinking_stage, thought_content, thinking_stage_output, agent_output, 
+                    conversation_id, session_id, azure_agent_id, model_deployment_name, thread_id,
+                    user_query, status, created_date)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, GETDATE())
+                """, (agent_name, thinking_stage, thought_content, thinking_stage_output, agent_output, 
+                      conversation_id, session_id, azure_agent_id, model_deployment_name, thread_id,
+                      user_query, status))
+                
+                # Commit and close connection
+                conn.commit()
+                cursor.close()
+                conn.close()
+                
+                return json.dumps({"success": True, "conversation_id": conversation_id})
+                
+            except Exception as db_error:
+                print(f"Database error in log_agent_thinking: {db_error}")
+                
+                try:
+                    # Log to console as fallback
+                    print(f"FALLBACK LOG - Agent: {agent_name}, Stage: {thinking_stage}")
+                    print(f"FALLBACK LOG - Conversation: {conversation_id}, Session: {session_id}")
+                    print(f"FALLBACK LOG - Content: {thought_content[:200]}...")
+                    
+                    return json.dumps({
+                        "success": False, 
+                        "error": str(db_error),
+                        "fallback": "Logged to console", 
+                        "conversation_id": conversation_id
+                    })
+                except Exception as fallback_error:
+                    print(f"Fallback logging error: {fallback_error}")
+                    return json.dumps({"error": f"Database error: {db_error}, Fallback error: {fallback_error}"})
+                
         except Exception as e:
-            print(f"Error logging agent thinking: {e}")
-            return json.dumps({"error": str(e)})
-    
+            print(f"Error in log_agent_thinking: {e}")
+            import traceback
+            traceback.print_exc()
+            try:
+                import json
+                return json.dumps({"error": str(e)})
+            except:
+                return '{"error": "Unknown error in log_agent_thinking"}'
+
     @kernel_function(description="Log the complete agent response")
     def log_agent_response(self, agent_name: str, response_content: str, 
                            conversation_id: str = None, session_id: str = None,

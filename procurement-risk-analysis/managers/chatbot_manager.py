@@ -701,7 +701,7 @@ class ChatbotManager:
             traceback.print_exc()
 
     async def generate_report_directly(self, session, risk_agent_name, latest_responses, conversation_id, session_id, original_message):
-        """Directly invokes the reporting agent when the normal chat flow fails and stores output in event log.
+        """Directly invokes the reporting agent with improved political risk integration.
         
         Args:
             session: The session data
@@ -733,8 +733,23 @@ class ChatbotManager:
             if SCHEDULER_AGENT in latest_responses:
                 scheduler_content = latest_responses[SCHEDULER_AGENT].content.replace("SCHEDULER_AGENT > ", "")
 
+            # Extract schedule data from scheduler content
+            schedule_data = self._extract_schedule_data(scheduler_content)
+
             # Check if there's political risk JSON data available
             political_risk_data = None
+            political_risk_table = None
+            
+            # First, try to extract the political risk table directly from the content
+            if risk_agent_name == POLITICAL_RISK_AGENT and risk_content:
+                # Extract the political risk table if available
+                import re
+                table_match = re.search(r'Political Risk Table(.*?)(?=###|$)', risk_content, re.DOTALL)
+                if table_match:
+                    political_risk_table = table_match.group(1).strip()
+                    print(f"Extracted political risk table: {len(political_risk_table)} characters")
+            
+            # Then try to get structured data from the database
             if risk_agent_name == POLITICAL_RISK_AGENT:
                 try:
                     # Query the event log for political risk JSON data
@@ -756,47 +771,98 @@ class ChatbotManager:
                         try:
                             political_risk_data = json.loads(row[0])
                             print(f"Retrieved political risk JSON data with {len(political_risk_data.get('political_risks', []))} risks")
-                        except:
-                            print("Error parsing political risk JSON data")
+                        except Exception as json_error:
+                            print(f"Error parsing political risk JSON data: {json_error}")
                     
                     cursor.close()
                     conn.close()
-                except Exception as e:
-                    print(f"Error retrieving political risk data: {e}")
-
-            # Prepare additional context if political risk data is available
+                except Exception as db_error:
+                    print(f"Error retrieving political risk data: {db_error}")
+            
+            # Prepare additional context for political risk data
             political_risk_context = ""
+            
+            # Add the table if available
+            if political_risk_table:
+                political_risk_context += "\n\n### POLITICAL RISK TABLE:\n" + political_risk_table
+                
+            # Add the structured data if available
             if political_risk_data:
-                political_risk_context = "\n\n### STRUCTURED POLITICAL RISK DATA:\n```json\n"
+                political_risk_context += "\n\n### STRUCTURED POLITICAL RISK DATA:\n```json\n"
                 political_risk_context += json.dumps(political_risk_data, indent=2)
                 political_risk_context += "\n```\n\n"
+                
+            # Add explicit instructions to include the political risk data
+            if political_risk_context:
+                political_risk_context += "\nIMPORTANT: Include the above political risk data in your report. Make sure to include the full political risk table in the Political Risk Analysis section.\n"
+
+            # Format schedule data if available
+            schedule_context = ""
+            if schedule_data:
+                schedule_context = "\n\n### STRUCTURED SCHEDULE DATA:\n```json\n"
+                schedule_context += json.dumps(schedule_data, indent=2)
+                schedule_context += "\n```\n\n"
 
             # Create input for reporting agent
             report_input = f"""
-            I need to generate a comprehensive report based on:
+            I need to generate a comprehensive risk report based on the available data.
 
+            SETUP INFORMATION:
+            - azure_agent_id: "REPORTING_AGENT"
+            - thread_id: "thread_unknown"
+            - conversation_id: "{conversation_id}"
+            - session_id: "{session_id}"
+
+            DATA SOURCES:
+            
             SCHEDULER DATA:
             {scheduler_content}
+            {schedule_context}
 
             RISK ANALYSIS:
             {risk_content}
             {political_risk_context}
 
-            Compile this into a professional report with these sections:
+            CRITICAL FORMATTING INSTRUCTIONS:
+            1. ONLY include the final report in your response - no debugging info, no step explanations
+            2. Format the report professionally with clear sections
+            3. If political risk data is available, include the complete political risk table
+            4. Make sure tables are formatted properly with even column widths
+            5. Keep your tables simple enough to display well in PDF format
+            6. For political risks, directly quote from the political risk agent's analysis
+            7. Include the file information block at the end
+
+            FORMAT YOUR REPORT WITH THESE EXACT SECTIONS:
             1. Executive Summary
-            2. Risk Assessment
-            3. Impact Analysis
-            4. Recommendations
-
-            Include specific insights from both the scheduler and risk agent analysis.
-
-            Important: When logging your thinking with log_agent_thinking, use these parameters:
-            - conversation_id: "{conversation_id}"
-            - session_id: "{session_id}"
+            2. Comprehensive Risk Summary Table (keep this simple with 4-5 columns max)
+            3. Detailed Risk Analysis by Category
+            - A. Schedule Risk Analysis
+            - B. Political Risk Analysis (include the full political risk table)
+            - C. Other Risk Types (if available)
+            4. Consolidated Recommendations
 
             When saving reports, use these parameters:
             - session_id: "{session_id}"
             - conversation_id: "{conversation_id}"
+            - report_title: "Comprehensive Equipment Schedule Risk Analysis"
+            
+            Include file information at the end in this format:
+            
+            ```
+            📄 Report Generated Successfully
+            
+            Filename: [filename]
+            Download URL: [blob_url]
+            Report ID: [report_id]
+            ```
+            
+            If file saving fails, use this format instead:
+            ```
+            ⚠️ Report Generation Notice
+            
+            The report was generated but could not be saved to a file.
+            Please try again or contact support if the issue persists.
+            ```
             """
 
             # Invoke the reporting agent directly with timeout
@@ -809,11 +875,19 @@ class ChatbotManager:
 
                 if reporting_response:
                     # Format as a ChatMessageContent
-                    formatted_response = f"REPORTING_AGENT > {reporting_response}"
+                    # Check if response already has the prefix
+                    if not reporting_response.startswith("REPORTING_AGENT >"):
+                        formatted_response = f"REPORTING_AGENT > {reporting_response}"
+                    else:
+                        formatted_response = reporting_response
+                    
+                    # Clean the response to remove any debugging info
+                    cleaned_response = f"REPORTING_AGENT > {self._clean_report_output(reporting_response)}"
+                    
                     latest_responses[REPORTING_AGENT] = ChatMessageContent(
                         role=AuthorRole.ASSISTANT,
                         name=REPORTING_AGENT,
-                        content=formatted_response
+                        content=cleaned_response
                     )
                     print("Successfully generated report through direct agent invocation")
 
@@ -821,7 +895,7 @@ class ChatbotManager:
                     await self._store_agent_output(
                         session_id=session_id,
                         agent_name=REPORTING_AGENT,
-                        agent_output=formatted_response,
+                        agent_output=cleaned_response,
                         action="Direct Report Generation"
                     )
 
@@ -834,7 +908,7 @@ class ChatbotManager:
                             conversation_id=conversation_id,
                             session_id=session_id,
                             user_query=original_message,
-                            agent_output=formatted_response
+                            agent_output=cleaned_response
                         )
                     except Exception as e:
                         print(f"Error logging direct report generation: {e}")
@@ -852,6 +926,60 @@ class ChatbotManager:
 
         return False
 
+    def _extract_schedule_data(self, scheduler_content):
+        """Extract structured schedule data from scheduler content.
+        
+        Args:
+            scheduler_content: The scheduler agent's output content
+            
+        Returns:
+            dict: Structured schedule data or None if extraction fails
+        """
+        try:
+            # Try to find JSON in the response
+            json_match = re.search(r'```json\s*(.*?)\s*```', scheduler_content, re.DOTALL)
+            
+            if json_match:
+                # Extract the JSON string
+                try:
+                    json_data = json.loads(json_match.group(1))
+                    return json_data
+                except Exception as e:
+                    print(f"Error parsing JSON: {e}")
+            
+            # If JSON extraction failed, try to extract structured data from Markdown table
+            table_pattern = r'\|\s*Equipment Code\s*\|\s*Equipment Name\s*\|\s*P6 Due Date\s*\|\s*Delivery Date\s*\|\s*Variance \(days\)\s*\|\s*Risk %\s*\|\s*Risk Level\s*\|(.*?)(?=\n\n|$)'
+            table_match = re.search(table_pattern, scheduler_content, re.DOTALL)
+            
+            if table_match:
+                table_content = table_match.group(1)
+                # Extract rows
+                rows = re.findall(r'\|\s*(\d+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|\s*([^|]+)\s*\|', table_content)
+                
+                equipment_items = []
+                for row in rows:
+                    if len(row) >= 7:
+                        item = {
+                            "code": row[0].strip(),
+                            "name": row[1].strip(),
+                            "p6DueDate": row[2].strip(),
+                            "deliveryDate": row[3].strip(),
+                            "variance": row[4].strip(),
+                            "riskPercentage": row[5].strip(),
+                            "riskLevel": row[6].strip()
+                        }
+                        equipment_items.append(item)
+                
+                # Create structured data
+                return {
+                    "equipmentItems": equipment_items
+                }
+            
+            return None
+        except Exception as e:
+            print(f"Error extracting schedule data: {e}")
+            return None
+    
     async def process_message(self, session_id, message):
         """Process a user message and return the appropriate response.
         
@@ -1128,13 +1256,13 @@ class ChatbotManager:
         # Check if the message is schedule-related
         is_schedule_related = any(
             keyword in message.lower() 
-            for keyword in ["schedule", "risk", "delay", "variance", "late", "delivery", "milestone"]
+            for keyword in ["schedule risk","schedule", "delay", "variance", "late", "delivery", "milestone"]
         )
         
         # Determine specific risk type queries
         is_political_risk = any(
             keyword in message.lower() 
-            for keyword in ["political risk", "political risks", "government", "political unrest"]
+            for keyword in ["political risk","politics", "politic", "political risks", "government", "political unrest"]
         )
         is_tariff_risk = any(
             keyword in message.lower() 
@@ -1191,7 +1319,7 @@ class ChatbotManager:
         )
     
     async def _process_specific_risk_query(self, session, user_message, risk_type, conversation_id, session_id, original_message):
-        """Process a specific risk query.
+        """Process a specific risk query with complete error handling and timeouts.
         
         Args:
             session: The session data
@@ -1216,14 +1344,32 @@ class ChatbotManager:
         # Add the user message to the chat
         await chat.add_chat_message(user_message)
         
+        # Set a timeout for the entire process
+        overall_timeout = 600  # 10 minutes total
+        start_time = time.time()
+        
         try:
             # Step 1: Get scheduler response
-            scheduler_response = await self._get_scheduler_response(
-                chat, 
-                latest_responses, 
-                session_id, 
-                cancellation_token
-            )
+            try:
+                remaining_timeout = overall_timeout - (time.time() - start_time)
+                if remaining_timeout <= 0:
+                    raise asyncio.TimeoutError("Overall process timeout exceeded")
+                    
+                scheduler_response = await asyncio.wait_for(
+                    self._get_scheduler_response(
+                        chat, 
+                        latest_responses, 
+                        session_id, 
+                        cancellation_token
+                    ),
+                    timeout=min(180, remaining_timeout)  # 3 minutes max or remaining time
+                )
+            except asyncio.TimeoutError:
+                print("Timeout waiting for scheduler response")
+                scheduler_response = None
+            except Exception as e:
+                print(f"Error getting scheduler response: {e}")
+                scheduler_response = None
             
             # Check for cancellation
             if cancellation_token and cancellation_token.done():
@@ -1249,14 +1395,28 @@ class ChatbotManager:
             structured_data = self._extract_structured_data(scheduler_response.content)
             
             # Step 3: Get risk agent response
-            risk_agent_response = await self._get_risk_agent_response(
-                chat, 
-                risk_type, 
-                structured_data, 
-                latest_responses, 
-                session_id, 
-                cancellation_token
-            )
+            try:
+                remaining_timeout = overall_timeout - (time.time() - start_time)
+                if remaining_timeout <= 0:
+                    raise asyncio.TimeoutError("Overall process timeout exceeded")
+                    
+                risk_agent_response = await asyncio.wait_for(
+                    self._get_risk_agent_response(
+                        chat, 
+                        risk_type, 
+                        structured_data, 
+                        latest_responses, 
+                        session_id, 
+                        cancellation_token
+                    ),
+                    timeout=min(240, remaining_timeout)  # 4 minutes max or remaining time
+                )
+            except asyncio.TimeoutError:
+                print(f"Timeout waiting for {risk_type} response")
+                risk_agent_response = None
+            except Exception as e:
+                print(f"Error getting {risk_type} response: {e}")
+                risk_agent_response = None
             
             # Check for cancellation
             if cancellation_token and cancellation_token.done():
@@ -1267,19 +1427,29 @@ class ChatbotManager:
                 }
             
             # Step 4: Get reporting agent response
-            if risk_type in latest_responses:
-                await self._get_reporting_agent_response(
-                    chat, 
-                    risk_type, 
-                    latest_responses, 
-                    session_id, 
-                    cancellation_token
+            try:
+                remaining_timeout = overall_timeout - (time.time() - start_time)
+                if remaining_timeout <= 0:
+                    raise asyncio.TimeoutError("Overall process timeout exceeded")
+                    
+                reporting_response = await asyncio.wait_for(
+                    self._get_reporting_agent_response(
+                        chat, 
+                        risk_type, 
+                        latest_responses, 
+                        session_id, 
+                        cancellation_token
+                    ),
+                    timeout=min(180, remaining_timeout)  # 3 minutes max or remaining time
                 )
+            except asyncio.TimeoutError:
+                print("Timeout waiting for reporting agent response")
+                reporting_response = None
                 
-                # If reporting agent didn't respond, try direct invocation
-                if REPORTING_AGENT not in latest_responses:
-                    print("Reporting agent did not respond, attempting direct report generation")
-                    await self.generate_report_directly(
+                # Try direct report generation
+                try:
+                    print("Attempting direct report generation after timeout")
+                    direct_success = await self.generate_report_directly(
                         session, 
                         risk_type, 
                         latest_responses, 
@@ -1287,9 +1457,74 @@ class ChatbotManager:
                         session_id, 
                         original_message
                     )
+                    
+                    if not direct_success:
+                        print("Direct report generation failed after timeout")
+                        
+                        # Try emergency force method
+                        try:
+                            print("Attempting emergency force method")
+                            emergency_success = await self.force_report_generation(
+                                session, 
+                                risk_type, 
+                                latest_responses, 
+                                conversation_id, 
+                                session_id, 
+                                original_message
+                            )
+                            
+                            if not emergency_success:
+                                print("Emergency force method failed")
+                        except Exception as emergency_error:
+                            print(f"Error in emergency force method: {emergency_error}")
+                            
+                except Exception as direct_error:
+                    print(f"Error in direct report generation after timeout: {direct_error}")
+                    
+            except Exception as e:
+                print(f"Error getting reporting agent response: {e}")
+                reporting_response = None
+                
+                # Try direct report generation
+                try:
+                    print("Attempting direct report generation after error")
+                    direct_success = await self.generate_report_directly(
+                        session, 
+                        risk_type, 
+                        latest_responses, 
+                        conversation_id, 
+                        session_id, 
+                        original_message
+                    )
+                    
+                    if not direct_success:
+                        print("Direct report generation failed after error")
+                except Exception as direct_error:
+                    print(f"Error in direct report generation after error: {direct_error}")
+            
+            # Check for cancellation
+            if cancellation_token and cancellation_token.done():
+                return {
+                    "status": "cancelled",
+                    "error": "Operation was cancelled",
+                    "conversation_id": conversation_id
+                }
             
             # Format the final response
             final_response = self._format_specific_risk_response(latest_responses, risk_type)
+            
+            # Log completion
+            try:
+                self.logging_plugin.log_agent_event(
+                    agent_name="ChatbotManager",
+                    action="Complete Risk Query",
+                    result_summary=f"Successfully processed {risk_type} query",
+                    conversation_id=conversation_id,
+                    session_id=session_id,
+                    user_query=original_message
+                )
+            except Exception as log_error:
+                print(f"Error logging completion: {log_error}")
             
             return {
                 "status": "success",
@@ -1317,6 +1552,188 @@ class ChatbotManager:
                     "conversation_id": conversation_id
                 }
     
+    async def force_report_generation(self, session, risk_type, latest_responses, conversation_id, session_id, original_message):
+        """Force the reporting agent to generate a report when the normal flow hangs.
+        
+        Args:
+            session: The session data
+            risk_type: The name of the risk agent
+            latest_responses: Dictionary of the latest responses from each agent
+            conversation_id: The conversation ID
+            session_id: The session ID
+            original_message: The original user message
+            
+        Returns:
+            bool: True if report generation was successful
+        """
+        print("Forcing report generation for hanging process")
+        
+        try:
+            # If the reporting agent isn't in the session, we can't continue
+            if REPORTING_AGENT not in session["agents"]:
+                print("Reporting agent not found in session")
+                return False
+            
+            # Get the reporting agent
+            reporting_agent = session["agents"][REPORTING_AGENT]
+            
+            # Collect all available information
+            available_data = {}
+            for agent_name, response in latest_responses.items():
+                available_data[agent_name] = response.content.replace(f"{agent_name} > ", "")
+            
+            # Try to get political risk data from the database if it's not in latest_responses
+            if risk_type == POLITICAL_RISK_AGENT and risk_type not in available_data:
+                try:
+                    conn = pyodbc.connect(self.connection_string)
+                    cursor = conn.cursor()
+                    
+                    # Query to find the political risk agent response
+                    cursor.execute("""
+                        SELECT TOP 1 agent_output
+                        FROM dim_agent_event_log
+                        WHERE conversation_id = ? 
+                        AND agent_name = 'POLITICAL_RISK_AGENT'
+                        ORDER BY event_time DESC
+                    """, (conversation_id,))
+                    
+                    row = cursor.fetchone()
+                    if row and row[0]:
+                        available_data[POLITICAL_RISK_AGENT] = row[0].replace("POLITICAL_RISK_AGENT > ", "")
+                        print(f"Retrieved political risk data from database: {len(available_data[POLITICAL_RISK_AGENT])} characters")
+                    
+                    cursor.close()
+                    conn.close()
+                except Exception as db_error:
+                    print(f"Error retrieving political risk data from database: {db_error}")
+            
+            # Create a simplified input for the reporting agent
+            report_input = f"""
+            EMERGENCY REPORT GENERATION:
+            A timeout or hang has occurred in the normal agent flow. You need to generate a report 
+            with the available data.
+            
+            CRITICAL INSTRUCTIONS:
+            1. Generate a report with ONLY what's available
+            2. Do NOT wait for more data or mention waiting
+            3. Skip any thinking steps and log calls that might fail
+            4. ONLY include the final report in your response
+            
+            AVAILABLE DATA:
+            
+            """
+            
+            # Add any data we have
+            if SCHEDULER_AGENT in available_data:
+                report_input += f"SCHEDULER DATA:\n{available_data[SCHEDULER_AGENT][:2000]}...\n\n"
+            
+            if risk_type in available_data:
+                report_input += f"RISK ANALYSIS:\n{available_data[risk_type][:2000]}...\n\n"
+            
+            # Extract any political risk table if it exists
+            political_risk_table = None
+            if risk_type == POLITICAL_RISK_AGENT and risk_type in available_data:
+                table_match = re.search(r'Political Risk Table(.*?)(?=###|$)', available_data[risk_type], re.DOTALL)
+                if table_match:
+                    political_risk_table = table_match.group(1).strip()
+                    report_input += f"POLITICAL RISK TABLE:\n{political_risk_table}\n\n"
+            
+            # Add report generation instructions
+            report_input += f"""
+            Generate a professional report with:
+            1. Executive Summary
+            2. Risk Summary Table (simple format)
+            3. Detailed Analysis
+            4. Recommendations
+            
+            When saving the report, use:
+            - session_id: "{session_id}"
+            - conversation_id: "{conversation_id}"
+            - report_title: "Emergency Risk Report"
+            
+            Include file information at the end in this format:
+            
+            ```
+            📄 Report Generated Successfully
+            
+            Filename: [filename]
+            Download URL: [blob_url]
+            Report ID: [report_id]
+            ```
+            
+            If file saving fails, use this format instead:
+            ```
+            ⚠️ Report Generation Notice
+            
+            The report was generated but could not be saved to a file.
+            Please try again or contact support if the issue persists.
+            ```
+            """
+            
+            # Set a strict timeout
+            try:
+                reporting_timeout = 120  # 2 minutes max
+                reporting_response = await asyncio.wait_for(
+                    reporting_agent.invoke(report_input),
+                    timeout=reporting_timeout
+                )
+                
+                if reporting_response:
+                    # Format the response
+                    if not reporting_response.startswith("REPORTING_AGENT >"):
+                        formatted_response = f"REPORTING_AGENT > {reporting_response}"
+                    else:
+                        formatted_response = reporting_response
+                    
+                    # Clean the response
+                    cleaned_response = self._clean_report_output(formatted_response)
+                    formatted_response = f"REPORTING_AGENT > {cleaned_response}"
+                    
+                    # Add to the latest responses
+                    latest_responses[REPORTING_AGENT] = ChatMessageContent(
+                        role=AuthorRole.ASSISTANT,
+                        name=REPORTING_AGENT,
+                        content=formatted_response
+                    )
+                    
+                    # Store the response in the event log
+                    await self._store_agent_output(
+                        session_id=session_id,
+                        agent_name=REPORTING_AGENT,
+                        agent_output=formatted_response,
+                        action="Emergency Report Generation"
+                    )
+                    
+                    # Log this action
+                    try:
+                        self.logging_plugin.log_agent_event(
+                            agent_name="SYSTEM",
+                            action="Emergency Report Generation",
+                            result_summary="Used emergency method to generate report due to hanging process",
+                            conversation_id=conversation_id,
+                            session_id=session_id,
+                            user_query=original_message,
+                            agent_output=formatted_response
+                        )
+                    except Exception as e:
+                        print(f"Error logging emergency report generation: {e}")
+                    
+                    return True
+                    
+            except asyncio.TimeoutError:
+                print(f"Emergency report generation timed out after {reporting_timeout} seconds")
+            except Exception as e:
+                print(f"Error during emergency report generation: {e}")
+                import traceback
+                traceback.print_exc()
+                
+        except Exception as e:
+            print(f"Failed to force report generation: {e}")
+            import traceback
+            traceback.print_exc()
+            
+        return False
+
     async def _get_scheduler_response(self, chat, latest_responses, session_id, cancellation_token):
         """Get the scheduler agent's response and store it in the event log.
         
@@ -1624,7 +2041,7 @@ class ChatbotManager:
         return None
 
     async def _get_reporting_agent_response(self, chat, risk_type, latest_responses, session_id, cancellation_token):
-        """Get the reporting agent's response and store it in the event log.
+        """Get the reporting agent's response and store it in the event log with improved error handling.
         
         Args:
             chat: The chat object
@@ -1699,11 +2116,15 @@ class ChatbotManager:
                 content=risk_content
             )
         else:
-            # If no risk agent response, create a placeholder
+            # If no risk agent response, create a placeholder directing to scheduler data
+            scheduler_content = ""
+            if SCHEDULER_AGENT in latest_responses:
+                scheduler_content = f"See the scheduler output for relevant schedule data: {latest_responses[SCHEDULER_AGENT].content[:100]}..."
+                
             reporting_agent_message = ChatMessageContent(
                 role=AuthorRole.ASSISTANT,
                 name=risk_type,
-                content=f"{risk_type} > No detailed risk analysis available. Please generate a report based on available data."
+                content=f"{risk_type} > Creating report based on available data. {scheduler_content}"
             )
         
         # Add the message to the chat
@@ -1715,6 +2136,7 @@ class ChatbotManager:
         try:
             # Create a task to get reporting agent response with timeout
             async def get_response():
+                response_found = False
                 async for response in chat.invoke():
                     # Check for cancellation
                     if cancellation_token and cancellation_token.done():
@@ -1723,6 +2145,7 @@ class ChatbotManager:
                     
                     if response and hasattr(response, 'name') and response.name == REPORTING_AGENT:
                         latest_responses[REPORTING_AGENT] = response
+                        response_found = True
                         
                         # Store the reporting agent's output in the event log
                         await self._store_agent_output(
@@ -1733,6 +2156,11 @@ class ChatbotManager:
                         )
                         
                         return
+                
+                # If we got here and no response was found, the chat might have terminated early
+                if not response_found:
+                    print("Chat terminated without reporting agent response, will try direct agent invocation")
+                    raise Exception("No reporting agent response received")
             
             # Add retry logic for reporting agent
             retry_count = 0
@@ -1758,12 +2186,35 @@ class ChatbotManager:
                         await asyncio.sleep(1)  # Brief pause before retry
                     else:
                         print(f"Reporting agent timed out after {reporting_timeout} seconds and {max_retries} retries")
+                        # Fall back to direct agent invocation
+                        conversation_id = self.chat_sessions[session_id]["conversation_id"]
+                        original_message = "Generate comprehensive report"  # Default message
+                        await self.generate_report_directly(
+                            session, 
+                            risk_type, 
+                            latest_responses, 
+                            conversation_id, 
+                            session_id, 
+                            original_message
+                        )
                 except Exception as e:
                     # If chat is already complete, try direct agent invocation
-                    if "Chat is already complete" in str(e):
-                        print("Chat already complete, will try direct agent invocation")
-                        break
-                        
+                    if "Chat is already complete" in str(e) or "No reporting agent response received" in str(e):
+                        print("Chat already complete or no response, will try direct agent invocation")
+                        conversation_id = self.chat_sessions[session_id]["conversation_id"]
+                        original_message = "Generate comprehensive report"  # Default message
+                        direct_success = await self.generate_report_directly(
+                            session, 
+                            risk_type, 
+                            latest_responses, 
+                            conversation_id, 
+                            session_id, 
+                            original_message
+                        )
+                        if direct_success:
+                            print("Successfully generated report via direct invocation")
+                            break
+                            
                     retry_count += 1
                     if retry_count <= max_retries:
                         print(f"Reporting agent error, retry {retry_count}/{max_retries}: {e}")
@@ -1794,11 +2245,40 @@ class ChatbotManager:
         """
         # If we have the reporting agent's response, use that
         if REPORTING_AGENT in latest_responses:
-            return latest_responses[REPORTING_AGENT].content.replace("REPORTING_AGENT > ", "")
+            # Clean the response to remove thinking logs and debug info
+            report_response = self._clean_report_output(latest_responses[REPORTING_AGENT].content.replace("REPORTING_AGENT > ", ""))
+            
+            # Check if the report is substantial enough
+            if len(report_response) > 200:
+                return report_response
+            else:
+                # Fall back to risk agent's response if the report is too short
+                if risk_type in latest_responses:
+                    risk_response = latest_responses[risk_type].content.replace(f"{risk_type} > ", "")
+                    return f"# {risk_type.replace('_AGENT', '').title()} Analysis\n\n{risk_response}"
+                else:
+                    # If no risk response, use scheduler response
+                    if SCHEDULER_AGENT in latest_responses:
+                        scheduler_response = latest_responses[SCHEDULER_AGENT].content.replace("SCHEDULER_AGENT > ", "")
+                        return f"# Schedule Analysis\n\n{scheduler_response}\n\n*Note: Detailed risk analysis could not be generated at this time.*"
+                    else:
+                        return "I'm sorry, I couldn't complete the risk analysis at this time. Please try again."
         
         # If we have the risk agent's response but not the reporting agent's, use the risk agent's
         if risk_type in latest_responses:
-            return latest_responses[risk_type].content.replace(f"{risk_type} > ", "")
+            risk_response = latest_responses[risk_type].content.replace(f"{risk_type} > ", "")
+            if SCHEDULER_AGENT in latest_responses:
+                scheduler_response = latest_responses[SCHEDULER_AGENT].content.replace("SCHEDULER_AGENT > ", "")
+                
+                # Extract key information from scheduler response
+                key_info = ""
+                schedule_match = re.search(r'Equipment Comparison Table(.*?)(?=##|\Z)', scheduler_response, re.DOTALL)
+                if schedule_match:
+                    key_info = f"## Schedule Information\n\n{schedule_match.group(1).strip()}\n\n"
+                
+                return f"# {risk_type.replace('_AGENT', '').title()} Analysis\n\n{risk_response}\n\n{key_info}"
+            else:
+                return f"# {risk_type.replace('_AGENT', '').title()} Analysis\n\n{risk_response}"
         
         # If we only have the scheduler's response, use that with a note
         if SCHEDULER_AGENT in latest_responses:
@@ -1807,7 +2287,7 @@ class ChatbotManager:
         
         # If no responses were collected, provide a fallback
         return "I'm sorry, I couldn't analyze the specific risk at this time. Please try again."
-    
+
     async def _process_comprehensive_risk_query(self, session, user_message, conversation_id, session_id, original_message):
         """Process a comprehensive risk query using parallel execution.
         
@@ -2499,7 +2979,7 @@ class ChatbotManager:
         return report
     
     def _format_standard_response(self, latest_responses, is_schedule_related):
-        """Format the response for a standard query.
+        """Format the response for a standard query with improved clean-up.
         
         Args:
             latest_responses: Dictionary of the latest responses from each agent
@@ -2514,6 +2994,18 @@ class ChatbotManager:
             if SCHEDULER_AGENT in latest_responses and REPORTING_AGENT in latest_responses:
                 # Use the reporting agent's response as the primary content
                 report_response = latest_responses[REPORTING_AGENT].content.replace("REPORTING_AGENT > ", "")
+                
+                # Clean up the response to remove thinking logs and log calls
+                report_response = self._clean_report_output(report_response)
+                
+                # Ensure report format is correct
+                if "Report Generated Successfully" in report_response:
+                    # Make sure the download info is properly formatted
+                    if "Download URL: " in report_response and "Filename: " in report_response:
+                        return report_response
+                    else:
+                        # Fix the formatting
+                        return self._fix_report_file_information(report_response)
                 
                 # Check if the report is substantial enough
                 if len(report_response) > 200:  # Arbitrary threshold for a meaningful report
@@ -2531,20 +3023,107 @@ class ChatbotManager:
             # If we only have reporting response but not scheduler
             elif REPORTING_AGENT in latest_responses:
                 report_response = latest_responses[REPORTING_AGENT].content.replace("REPORTING_AGENT > ", "")
+                report_response = self._clean_report_output(report_response)
+                
+                # Ensure report format is correct
+                if "Report Generated Successfully" in report_response:
+                    # Make sure the download info is properly formatted
+                    if "Download URL: " in report_response and "Filename: " in report_response:
+                        return report_response
+                    else:
+                        # Fix the formatting
+                        return self._fix_report_file_information(report_response)
                 return report_response
         
         # For general queries
         if latest_responses:
             # Get the last agent's response
             last_agent = list(latest_responses.keys())[-1]
-            return latest_responses[last_agent].content.replace(f"{last_agent} > ", "")
+            response = latest_responses[last_agent].content.replace(f"{last_agent} > ", "")
+            
+            # If this is a reporting agent response, clean it up
+            if last_agent == REPORTING_AGENT:
+                response = self._clean_report_output(response)
+                
+            return response
         
         # If no responses were collected, provide a fallback
         if is_schedule_related:
             return "I'm sorry, I couldn't analyze the schedule data at this time due to system limitations. Please try again in a few minutes."
         else:
             return "I'm sorry, I couldn't process your request at this time. Please try again in a moment."
-    
+
+    def _clean_report_output(self, report_content):
+        """Clean up report output to remove thinking logs and log calls.
+        
+        Args:
+            report_content: The report content
+            
+        Returns:
+            str: The cleaned report content
+        """
+        # Remove log_agent_thinking call blocks
+        cleaned = re.sub(r'```\s*Agent Name:.*?```', '', report_content, flags=re.DOTALL)
+        
+        # Remove thought process explanation
+        cleaned = re.sub(r'\*\*Step \d+:.*?Stage\*\*.*?(?=\*\*Step|\*\*Comprehensive|\Z)', '', cleaned, flags=re.DOTALL)
+        
+        # Remove parameter setup section
+        cleaned = re.sub(r'\*\*Parameter Setup\*\*.*?(?=\*\*Step|\*\*Comprehensive|\Z)', '', cleaned, flags=re.DOTALL)
+        
+        # Remove any remaining step headers
+        cleaned = re.sub(r'\*\*Step \d+:.*?\*\*', '', cleaned)
+        
+        # Remove phrases about saving the report
+        cleaned = re.sub(r'Saving report now\.\.\.', '', cleaned)
+        cleaned = re.sub(r'Attempting to save the report.*?(?=\n\n|\Z)', '', cleaned, flags=re.DOTALL)
+        
+        # Fix any double spacing from removed content
+        cleaned = re.sub(r'\n\s*\n\s*\n', '\n\n', cleaned)
+        
+        # Ensure report starts with Comprehensive Risk Report if not already
+        if not re.search(r'^\s*#\s*Comprehensive Risk Report', cleaned, re.MULTILINE):
+            if "Executive Summary" in cleaned and not "Comprehensive Risk Report" in cleaned[:200]:
+                cleaned = "# Comprehensive Risk Report\n\n" + cleaned
+        
+        return cleaned.strip()
+
+    def _fix_report_file_information(self, report_content):
+        """Fix report file information formatting.
+        
+        Args:
+            report_content: The report content
+            
+        Returns:
+            str: The report content with fixed file information
+        """
+        try:
+            # Extract the main report content
+            main_content = report_content.split("Report Generated Successfully")[0].strip()
+            
+            # Extract file information
+            filename_match = re.search(r'Filename:\s*([^\n]+)', report_content)
+            download_url_match = re.search(r'Download URL:\s*([^\n]+)', report_content)
+            report_id_match = re.search(r'Report ID:\s*([^\n]+)', report_content)
+            
+            if filename_match and download_url_match:
+                # Create properly formatted file information
+                file_info = "\n\n📄 Report Generated Successfully\n\n"
+                file_info += f"Filename: {filename_match.group(1).strip()}\n"
+                file_info += f"Download URL: {download_url_match.group(1).strip()}\n"
+                
+                if report_id_match:
+                    file_info += f"Report ID: {report_id_match.group(1).strip()}\n"
+                
+                # Return the fixed report content
+                return main_content + file_info
+            else:
+                # If we can't extract the file information, return the original content
+                return report_content
+        except Exception as e:
+            print(f"Error fixing report file information: {e}")
+            return report_content
+
     async def _log_assistant_response(self, conversation_id, session_id, message, response):
         """Log the assistant's response.
         

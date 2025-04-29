@@ -151,85 +151,114 @@ class ChatbotSelectionStrategy(SequentialSelectionStrategy):
             
             # Political risk flow
             if "political risk" in original_query or "political risks" in original_query:
-                # Check if we already have a political risk response in history
-                has_political_response = any(
-                    msg.name == POLITICAL_RISK_AGENT for msg in history if hasattr(msg, 'name')
-                )
+                # Check if political agent has already responded
+                political_responded = any(msg.name == POLITICAL_RISK_AGENT for msg in history if hasattr(msg, 'name'))
                 
-                if not has_political_response:
+                if not political_responded:
+                    # Select political risk agent
                     political_agent = next((agent for agent in agents if agent.name == POLITICAL_RISK_AGENT), None)
                     if political_agent:
                         print("Selecting political risk agent after scheduler")
                         return political_agent
                     else:
-                        print("WARNING: Political risk agent not found")
+                        print("WARNING: Political risk agent not found, selecting reporting agent")
                         return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
                 else:
-                    # If we already have a political risk response, go to reporting
+                    # Political agent already responded, go to reporting agent
                     print("Political risk agent already responded, selecting reporting agent")
                     return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
             
             # Tariff risk flow
             if any(keyword in original_query for keyword in ["tariff risk", "tariff risks", "trade risk"]):
-                has_tariff_response = any(
-                    msg.name == TARIFF_RISK_AGENT for msg in history if hasattr(msg, 'name')
-                )
+                # Check if tariff agent has already responded
+                tariff_responded = any(msg.name == TARIFF_RISK_AGENT for msg in history if hasattr(msg, 'name'))
                 
-                if not has_tariff_response:
+                if not tariff_responded:
+                    # Select tariff risk agent
                     tariff_agent = next((agent for agent in agents if agent.name == TARIFF_RISK_AGENT), None)
                     if tariff_agent:
                         print("Selecting tariff risk agent after scheduler")
                         return tariff_agent
                     else:
-                        print("WARNING: Tariff risk agent not found")
+                        print("WARNING: Tariff risk agent not found, selecting reporting agent")
                         return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
                 else:
+                    # Tariff agent already responded, go to reporting agent
                     print("Tariff risk agent already responded, selecting reporting agent")
                     return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
             
             # Logistics risk flow
             if any(keyword in original_query for keyword in ["logistics risk", "logistics risks", "shipping risk"]):
-                has_logistics_response = any(
-                    msg.name == LOGISTICS_RISK_AGENT for msg in history if hasattr(msg, 'name')
-                )
+                # Check if logistics agent has already responded
+                logistics_responded = any(msg.name == LOGISTICS_RISK_AGENT for msg in history if hasattr(msg, 'name'))
                 
-                if not has_logistics_response:
+                if not logistics_responded:
+                    # Select logistics risk agent
                     logistics_agent = next((agent for agent in agents if agent.name == LOGISTICS_RISK_AGENT), None)
                     if logistics_agent:
                         print("Selecting logistics risk agent after scheduler")
                         return logistics_agent
                     else:
-                        print("WARNING: Logistics risk agent not found")
+                        print("WARNING: Logistics risk agent not found, selecting reporting agent")
                         return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
                 else:
+                    # Logistics agent already responded, go to reporting agent
                     print("Logistics risk agent already responded, selecting reporting agent")
+                    return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
+            
+            # For comprehensive risk analysis
+            if any(keyword in original_query for keyword in ["all risks", "comprehensive", "full analysis", "risk analysis", "what are the risks"]):
+                # Check which risk agents have already responded
+                political_responded = any(msg.name == POLITICAL_RISK_AGENT for msg in history if hasattr(msg, 'name'))
+                tariff_responded = any(msg.name == TARIFF_RISK_AGENT for msg in history if hasattr(msg, 'name'))
+                logistics_responded = any(msg.name == LOGISTICS_RISK_AGENT for msg in history if hasattr(msg, 'name'))
+                
+                # If no risk agents have responded yet, start with political
+                if not political_responded and not tariff_responded and not logistics_responded:
+                    political_agent = next((agent for agent in agents if agent.name == POLITICAL_RISK_AGENT), None)
+                    if political_agent:
+                        print("Comprehensive analysis: selecting political risk agent first")
+                        return political_agent
+                # If political responded but not tariff, select tariff
+                elif political_responded and not tariff_responded:
+                    tariff_agent = next((agent for agent in agents if agent.name == TARIFF_RISK_AGENT), None)
+                    if tariff_agent:
+                        print("Comprehensive analysis: selecting tariff risk agent")
+                        return tariff_agent
+                # If political and tariff responded but not logistics, select logistics
+                elif political_responded and tariff_responded and not logistics_responded:
+                    logistics_agent = next((agent for agent in agents if agent.name == LOGISTICS_RISK_AGENT), None)
+                    if logistics_agent:
+                        print("Comprehensive analysis: selecting logistics risk agent")
+                        return logistics_agent
+                # If all risk agents have responded, select reporting
+                else:
+                    print("All risk agents have responded or not found, selecting reporting agent")
                     return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
             
             # For schedule-only queries or unrecognized queries, go to reporting agent
             print("Schedule-only or unrecognized query, selecting reporting agent")
-            return next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
+            reporting_agent = next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
+            if reporting_agent:
+                return reporting_agent
+            else:
+                print("WARNING: Reporting agent not found, terminating")
+                return None
         
-        # CRITICAL: After a specific risk agent, always go to reporting agent
+        # After a specific risk agent, ALWAYS go to reporting agent
         if last_agent in [POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT]:
-            print(f"Risk agent {last_agent} finished, selecting reporting agent")
+            print(f"{last_agent} has responded, selecting reporting agent next")
             
             # Wait briefly to ensure the risk agent has fully completed
             await asyncio.sleep(1)
             
-            # Check if we already have a reporting agent response in history
-            has_reporting_response = any(
-                msg.name == REPORTING_AGENT for msg in history if hasattr(msg, 'name')
-            )
-            
-            if not has_reporting_response:
-                reporting_agent = next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
-                if reporting_agent:
-                    return reporting_agent
-                else:
-                    print("WARNING: Could not find REPORTING_AGENT in agents list")
-                    return None
+            # Try to get the reporting agent
+            reporting_agent = next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
+            if reporting_agent:
+                print(f"Successfully found reporting agent after {last_agent}")
+                return reporting_agent
             else:
-                print("Reporting agent already responded, terminating")
+                print(f"WARNING: Could not find REPORTING_AGENT after {last_agent}, returning None to terminate")
                 return None
         
         # After reporting agent, terminate
@@ -242,7 +271,7 @@ class ChatbotSelectionStrategy(SequentialSelectionStrategy):
             print("Assistant agent finished, terminating")
             return None
         
-        # Default to assistant agent
+        # Default to assistant agent for any other case
         print("No specific condition matched, defaulting to assistant agent")
         assistant_agent = next((agent for agent in agents if agent.name == ASSISTANT_AGENT), None)
         if assistant_agent:
@@ -250,7 +279,7 @@ class ChatbotSelectionStrategy(SequentialSelectionStrategy):
         else:
             print("WARNING: Could not find ASSISTANT_AGENT for default return")
             return None
-
+        
 # Termination Strategy for interactive chatbot - UPDATED VERSION
 class ChatbotTerminationStrategy(TerminationStrategy):
     """Fixed termination strategy to ensure proper flow between agents."""
@@ -261,7 +290,7 @@ class ChatbotTerminationStrategy(TerminationStrategy):
         # Store all state in local instance variables to avoid Pydantic validation
         self._start_time = time.time()
         self._max_turns = 50
-        self._timeout_seconds = 600  # 10 minutes total timeout
+        self._timeout_seconds = 360  # 6 minutes total timeout
         self._agent_timeouts = {
             POLITICAL_RISK_AGENT: 300,  # 5 minutes for political risk agent
             TARIFF_RISK_AGENT: 300,     # 5 minutes for tariff risk agent
@@ -270,6 +299,8 @@ class ChatbotTerminationStrategy(TerminationStrategy):
         }
         self._agent_start_times = {}
         self._agent_responses = set()  # Track which agents have responded
+        self._reporting_attempted = False
+        self._already_terminated = False
         
     def reset(self):
         """Reset the termination strategy."""
@@ -277,9 +308,16 @@ class ChatbotTerminationStrategy(TerminationStrategy):
         self._start_time = time.time()
         self._agent_start_times = {}
         self._agent_responses = set()
+        self._reporting_attempted = False
+        self._already_terminated = False
     
     async def should_terminate(self, selected_agent, history):
         """Check if the chat should terminate with improved logic for risk agent flow."""
+        # If we've already decided to terminate, stick with that decision
+        if self._already_terminated:
+            print("Already decided to terminate")
+            return True
+            
         # If we have fewer than 2 messages, don't terminate
         if len(history) < 2:
             print("History too short, not terminating")
@@ -293,6 +331,7 @@ class ChatbotTerminationStrategy(TerminationStrategy):
         # Check for overall timeout
         if time.time() - self._start_time > self._timeout_seconds:
             print(f"Chat terminated due to overall timeout after {self._timeout_seconds} seconds")
+            self._already_terminated = True
             return True
         
         # Check for individual agent timeouts
@@ -302,11 +341,13 @@ class ChatbotTerminationStrategy(TerminationStrategy):
                 elapsed = time.time() - start_time
                 if elapsed > max_time:
                     print(f"Chat terminated due to {agent_name} timeout after {elapsed:.2f} seconds (max: {max_time})")
+                    self._already_terminated = True
                     return True
         
         # Check for maximum turns
         if len(history) > self._max_turns * 2:  # *2 because each turn is user + assistant
             print(f"Chat terminated due to exceeding maximum turns: {self._max_turns}")
+            self._already_terminated = True
             return True
         
         # Get the last message agent
@@ -317,91 +358,55 @@ class ChatbotTerminationStrategy(TerminationStrategy):
             self._agent_responses.add(last_agent)
             print(f"Added {last_agent} to responded agents. Current: {self._agent_responses}")
         
-        # Extract the original user query
-        original_query = ""
-        for msg in history:
-            if msg.role == AuthorRole.USER:
-                original_query = msg.content.lower()
-                break
-        
-        # CRITICAL: For political risk flow
-        if "political risk" in original_query or "political risks" in original_query:
-            print("Political risk query detected")
-            
-            # Check if we've seen both the scheduler, political risk agent, and reporting agent
-            if (SCHEDULER_AGENT in self._agent_responses and 
-                POLITICAL_RISK_AGENT in self._agent_responses and 
-                REPORTING_AGENT in self._agent_responses):
-                print("Complete political risk flow detected, terminating")
-                return True
-                
-            # If political risk agent has responded but reporting agent hasn't, don't terminate
-            if POLITICAL_RISK_AGENT in self._agent_responses and REPORTING_AGENT not in self._agent_responses:
-                print("Political risk flow in progress, not terminating yet")
-                return False
-            
-            # If only scheduler has responded, don't terminate
-            if SCHEDULER_AGENT in self._agent_responses and POLITICAL_RISK_AGENT not in self._agent_responses:
-                print("Waiting for political risk agent, not terminating")
-                return False
-        
-        # Similar logic for tariff risk
-        if any(keyword in original_query for keyword in ["tariff risk", "tariff risks", "trade risk"]):
-            if (SCHEDULER_AGENT in self._agent_responses and 
-                TARIFF_RISK_AGENT in self._agent_responses and 
-                REPORTING_AGENT in self._agent_responses):
-                return True
-                
-            if TARIFF_RISK_AGENT in self._agent_responses and REPORTING_AGENT not in self._agent_responses:
-                return False
-            
-            if SCHEDULER_AGENT in self._agent_responses and TARIFF_RISK_AGENT not in self._agent_responses:
-                return False
-        
-        # Similar logic for logistics risk
-        if any(keyword in original_query for keyword in ["logistics risk", "logistics risks", "shipping risk"]):
-            if (SCHEDULER_AGENT in self._agent_responses and 
-                LOGISTICS_RISK_AGENT in self._agent_responses and 
-                REPORTING_AGENT in self._agent_responses):
-                return True
-                
-            if LOGISTICS_RISK_AGENT in self._agent_responses and REPORTING_AGENT not in self._agent_responses:
-                return False
-            
-            if SCHEDULER_AGENT in self._agent_responses and LOGISTICS_RISK_AGENT not in self._agent_responses:
-                return False
-        
-        # For schedule-only risk questions 
-        if any(keyword in original_query for keyword in ["schedule risk", "delay risk", "variance risk"]) and \
-           not any(keyword in original_query for keyword in ["political", "tariff", "logistics", "all risks", "comprehensive"]):
-            # Only terminate after the reporting agent has responded
-            if SCHEDULER_AGENT in self._agent_responses and REPORTING_AGENT in self._agent_responses:
-                return True
-            return False
-        
-        # For comprehensive analysis
-        if any(keyword in original_query for keyword in ["all risks", "comprehensive", "full analysis", "what are the risks"]):
-            # Only terminate after we've seen the reporting agent
-            if REPORTING_AGENT in self._agent_responses:
-                return True
-            return False
-        
         # Special case for reporting agent (allow it to finish)
         if last_agent == REPORTING_AGENT:
             print("Reporting agent has responded - wait for completion")
+            
+            # Check if the message indicates a completed report
+            message_content = history[-1].content if hasattr(history[-1], 'content') else ""
+            
+            # Set reporting agent as attempted if we've seen a response
+            self._reporting_attempted = True
+            
+            # Look for indicators of a complete report
+            report_completed = False
+            
             # Check if the response is substantial enough
-            if len(history[-1].content) > 3000:  # Simple check for substantial content
-                print("REPORTING_AGENT response is substantial, FORCING TERMINATION")
+            if len(message_content) > 1000:  # Simple check for substantial content
+                report_completed = True
+            
+            # Check for file information section
+            if "Report Generated Successfully" in message_content:
+                report_completed = True
+                
+            # Check for executive summary and recommendations sections
+            if "Executive Summary" in message_content and "Recommendations" in message_content:
+                report_completed = True
+                
+            if report_completed:
+                print("REPORTING_AGENT response is complete, FORCING TERMINATION")
+                self._already_terminated = True
                 return True
+            
+            return False
+        
+        # CRITICAL: After a specific risk agent, check if reporting agent has been attempted
+        if last_agent in [POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT]:
+            if self._reporting_attempted:
+                print(f"Risk agent {last_agent} has responded and reporting has been attempted, terminating")
+                self._already_terminated = True
+                return True
+            return False
         
         # Standard cases for termination
         if last_agent == ASSISTANT_AGENT:
             print("ASSISTANT_AGENT responded - terminating")
+            self._already_terminated = True
             return True
         
         # Don't terminate yet - continue the conversation
         return False
-
+    
 # NEW: Strategy for managing parallel execution of risk analysis agents
 class ParallelRiskAnalysisStrategy(SequentialSelectionStrategy):
     """A strategy for managing parallel execution of risk analysis agents."""
