@@ -756,6 +756,21 @@ def cleanup_resources():
 
 # Main entry point
 if __name__ == "__main__":
-    # Register the cleanup function to run when Streamlit is done
-    import atexit
-    atexit.register(cleanup_resources)
+    try:
+        # Register the cleanup function to run when Streamlit is done
+        import atexit
+        atexit.register(cleanup_resources)
+        
+        # Also register signal handlers for proper cleanup
+        import signal
+        
+        def signal_handler(sig, frame):
+            print(f"Received signal {sig}, running cleanup...")
+            cleanup_resources()
+            sys.exit(0)
+            
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+    except Exception as e:
+        print(f"Error setting up cleanup handlers: {e}")

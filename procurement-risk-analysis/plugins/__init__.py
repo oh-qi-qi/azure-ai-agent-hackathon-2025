@@ -3,11 +3,13 @@
 from .schedule_plugin import EquipmentSchedulePlugin
 from .risk_plugin import RiskCalculationPlugin
 from .logging_plugin import LoggingPlugin
-from .report_file_plugin import ReportFilePlugin 
+from .report_file_plugin import ReportFilePlugin
+from .political_risk_json_plugin import PoliticalRiskJsonPlugin
 
 __all__ = [
     'EquipmentSchedulePlugin',
     'RiskCalculationPlugin',
     'LoggingPlugin',
-    'ReportFilePlugin'  
+    'ReportFilePlugin',
+    'PoliticalRiskJsonPlugin'
 ]

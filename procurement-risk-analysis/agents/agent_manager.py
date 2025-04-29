@@ -83,31 +83,91 @@ async def create_or_reuse_agent(client, agent_name, model_deployment_name, instr
             "instructions": instructions,
         }
         
+        # Initialize Bing tool if connections is provided with the right format
+        bing_tool = None
+        
         # Add connections if provided
         if connections:
-            # Add connections based on the format they're provided in
-            if isinstance(connections, dict):
-                # Handle dictionary format (our custom format)
-                if "api_key" in connections:
-                    # For direct API key method
-                    if connections["type"] == "BingGrounding":
-                        # Create BingGroundingTool with API key
-                        from azure.ai.projects.models import BingGroundingTool
-                        bing_tool = BingGroundingTool(api_key=connections["api_key"])
-                        creation_args["tools"] = bing_tool.definitions
-                elif "connection_id" in connections:
-                    # For connection ID method
-                    if connections["type"] == "BingGrounding":
-                        from azure.ai.projects.models import BingGroundingTool
+            # Check if connections is a dictionary with Bing information
+            if isinstance(connections, dict) and "type" in connections and connections["type"] == "BingGrounding":
+                from azure.ai.projects.models import BingGroundingTool
+                
+                # Method 1: Using connection_id
+                if "connection_id" in connections:
+                    print(f"Using connection ID: {connections['connection_id']}")
+                    try:
                         bing_tool = BingGroundingTool(connection_id=connections["connection_id"])
-                        creation_args["tools"] = bing_tool.definitions
-            else:
-                # Handle other possible formats or direct objects
-                try:
-                    creation_args["connections"] = connections
-                except TypeError:
-                    print(f"Warning: Could not add connections to agent creation. Unexpected type: {type(connections)}")
+                    except Exception as e:
+                        print(f"Error creating BingGroundingTool with connection_id: {e}")
+                
+                # Method 2: Using connection_name - need to get the connection first
+                elif "connection_name" in connections:
+                    connection_name = connections["connection_name"]
+                    print(f"Using named connection: {connection_name}")
+                    try:
+                        # Get the connection synchronously or asynchronously based on what's supported
+                        try:
+                            # Try async method first (this is the most likely scenario)
+                            bing_connection = await client.connections.get(connection_name=connection_name)
+                            print(f"Retrieved Bing connection with ID: {bing_connection.id}")
+                        except (TypeError, AttributeError):
+                            # Fall back to sync method if async isn't working
+                            import inspect
+                            if not inspect.iscoroutinefunction(client.connections.get):
+                                bing_connection = client.connections.get(connection_name=connection_name)
+                                print(f"Retrieved Bing connection with ID: {bing_connection.id} (sync method)")
+                            else:
+                                # If we get here, something else is wrong
+                                raise ValueError("Could not call client.connections.get properly")
+                        
+                        # Create tool with connection ID
+                        bing_tool = BingGroundingTool(connection_id=bing_connection.id)
+                    except Exception as e:
+                        print(f"Error getting named connection: {e}")
+                
+                # Method 3: Try API key method
+                elif "api_key" in connections:
+                    api_key = connections["api_key"]
+                    print("Using API key method")
+                    try:
+                        bing_tool = BingGroundingTool(api_key=api_key)
+                    except TypeError as e:
+                        print(f"TypeError creating BingGroundingTool with api_key: {e}")
+                        print("Your version of azure-ai-projects doesn't support the api_key parameter")
+                        
+                        # Try to get connection name from environment as fallback
+                        import os
+                        bing_connection_name = os.getenv("BING_CONNECTION_NAME")
+                        if bing_connection_name:
+                            try:
+                                print(f"Falling back to named connection: {bing_connection_name}")
+                                # Try async method first
+                                try:
+                                    bing_connection = await client.connections.get(connection_name=bing_connection_name)
+                                except (TypeError, AttributeError):
+                                    # Fall back to sync method if async isn't working
+                                    if not inspect.iscoroutinefunction(client.connections.get):
+                                        bing_connection = client.connections.get(connection_name=bing_connection_name)
+                                    else:
+                                        # If we get here, something else is wrong
+                                        raise ValueError("Could not call client.connections.get properly")
+                                        
+                                bing_tool = BingGroundingTool(connection_id=bing_connection.id)
+                                print(f"Created BingGroundingTool with connection ID: {bing_connection.id}")
+                            except Exception as fallback_e:
+                                print(f"Error using fallback named connection: {fallback_e}")
+                    except Exception as e:
+                        print(f"Other error creating BingGroundingTool: {e}")
+                        
+            # If connections is already a tool object with definitions
+            elif hasattr(connections, "definitions"):
+                bing_tool = connections
         
+        # Add Bing tool to creation args if successfully created
+        if bing_tool and hasattr(bing_tool, "definitions"):
+            creation_args["tools"] = bing_tool.definitions
+            print(f"Added Bing tool with {len(bing_tool.definitions)} definitions")
+            
         # Create the agent with appropriate arguments
         agent_definition = await client.agents.create_agent(**creation_args)
         
