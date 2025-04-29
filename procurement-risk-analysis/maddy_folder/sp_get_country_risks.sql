@@ -28,7 +28,7 @@ BEGIN
         JSON_VALUE(pr.value, '$.citation_title') AS CitationTitle,
         JSON_VALUE(pr.value, '$.citation_name') AS CitationName,
         JSON_VALUE(pr.value, '$.citation_url') AS CitationUrl
-    FROM [dbo].[dim_agent_thinking_log] AS dat
+    FROM [dbo].[dim_agent_event_log] AS dat
     CROSS APPLY OPENJSON(JSON_QUERY(dat.value, '$.political_risks')) AS pr
     WHERE dat.[action] = 'Political Risk JSON Data';
     
