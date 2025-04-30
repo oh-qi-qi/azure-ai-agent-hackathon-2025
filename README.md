@@ -17,6 +17,14 @@ By leveraging Azure AI Projects and specialized AI agents, it delivers comprehen
 
 ![System Architecture Diagram](docs/images/system_architecture_1.jpg)
 
+## Azure Technologies Used
+
+- **Azure AI Agent Service** - Foundation for creating and orchestrating specialized agents
+- **Azure OpenAI Service** - Powerful language models driving intelligent analysis
+- **Grounding with Bing Search** - Real-time access to global events and political developments
+- **Azure Storage** - Secure document management and report storage
+- **Azure SQL Database** - Structured data storage and analytics capabilities
+
 ## Business Impact
 
 RiskWise solves critical business challenges by:
@@ -83,19 +91,7 @@ The Developer View is built directly into the Streamlit interface, providing a c
 ## System Components
 ![System Components Diagram](docs/images/system_components_1.jpg)
 
-The system consists of several interrelated components that work together to provide comprehensive risk analysis.
-
-## Azure Technologies Used
-
-- **Azure AI Agent Service** - Foundation for creating and orchestrating specialized agents
-- **Azure OpenAI Service** - Powerful language models driving intelligent analysis
-- **Grounding with Bing Search** - Real-time access to global events and political developments
-- **Azure Storage** - Secure document management and report storage
-- **Azure SQL Database** - Structured data storage and analytics capabilities
-
-## System Architecture
-
-The system follows a modular, multi-agent design pattern:
+The system consists of several interrelated components that work together to provide comprehensive risk analysis. The system follows a modular, multi-agent design pattern:
 
 ### Agent Layer
 - **Scheduler Agent** - Processes equipment data, calculates variances, determines risk levels
