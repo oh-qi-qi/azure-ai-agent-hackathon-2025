@@ -44,7 +44,7 @@ By leveraging Azure AI Projects and specialized AI agents, it delivers comprehen
 - **Visual Studio Code** – Lightweight code editor with extensive plugin support  
 - **Postman** – API testing and documentation tool  
 - **Git** – Distributed version control system
-- 
+  
 ## Business Impact
 
 RiskWise solves critical business challenges by:
