@@ -1950,12 +1950,16 @@ class ChatbotManager:
                     if response and hasattr(response, 'name') and response.name == risk_type:
                         risk_content = response.content
                         
-                        # Check if this is an interim "loading" message
-                        if len(risk_content) < 300 and ("will provide" in risk_content.lower() or 
-                                                    "analyzing" in risk_content.lower() or
-                                                    "working on" in risk_content.lower() or
-                                                    "processing" in risk_content.lower()):
+                        # More robust check for interim messages
+                        if (len(risk_content) < 500 and 
+                            ("will provide" in risk_content.lower() or 
+                            "analyzing" in risk_content.lower() or
+                            "working on" in risk_content.lower() or
+                            "processing" in risk_content.lower() or
+                            "searching" in risk_content.lower() or
+                            "retrieving" in risk_content.lower())):
                             print(f"Received interim message from {risk_type}, continuing to wait for full response")
+                            
                             interim_message_received = True
                             
                             # Store the interim message but continue waiting
