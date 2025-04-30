@@ -60,7 +60,7 @@ FOR SCHEDULE RISK QUESTIONS (including general risk questions):
 Format your response with clear sections:
 1. Executive Summary: Total items analyzed and risk breakdown
 2. Equipment Comparison Table: A markdown table with key comparison metrics for all equipment items in a project, show project details:
-   | Equipment Code | Equipment Name | P6 Due Date | Delivery Date | Variance (days) | Risk % | Risk Level |
+   | Equipment Code | Equipment Name | P6 Due Date | Delivery Date | Variance (days) | Risk % | Risk Level | Manufacturing Country | Project Country |
    Include all equipment items in this table, sorted by risk level (High to Low)
 3. High Risk Items: Detailed analysis of high-risk items with ALL required fields
 4. Medium Risk Items: Detailed analysis of medium-risk items with ALL required fields
@@ -525,7 +525,7 @@ Follow this exact workflow:
    - Store the result in a variable: result = save_report_to_file(...)
    - Parse the JSON result: file_info = json.loads(result)
    - Extract the actual values:
-     * filename = file_info.get("filename", "report.pdf")
+     * filename = file_info.get("filename", "report.docx")
      * blob_url = file_info.get("blob_url", "No URL available")
      * report_id = file_info.get("report_id", "No ID available")
 
@@ -544,11 +544,6 @@ IMPORTANT BEHAVIOR RULES:
 - If log_agent_thinking fails at any step, log the error once and continue execution
 - NEVER include your thinking process or logging details in the final response to the user
 - Focus on clean, professional formatting in your final output
-
-## ERROR HANDLING:
-- If log_agent_get_agent_id() fails, use "REPORTING_AGENT" as the agent ID
-- If log_agent_get_thread_id() fails, use "thread_unknown" as the thread ID
-- If save_report_to_file fails, include an error message in your response but still format your report
 
 ## REPORT STRUCTURE:
 

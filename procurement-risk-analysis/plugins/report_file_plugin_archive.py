@@ -1,4 +1,4 @@
-"""Improved ReportFilePlugin with Spire.Doc.Free integration."""
+"""Improved ReportFilePlugin with md2docx_python integration."""
 
 import json
 import uuid
@@ -10,15 +10,13 @@ import traceback
 import tempfile
 from semantic_kernel.functions.kernel_function_decorator import kernel_function
 
-# Import the Spire.Doc library
+# Import the md2docx_python library
 try:
-    from spire.doc import Document, FileFormat, PreferredWidth, HorizontalAlignment
-    from spire.doc.common import *
-    
-    SPIRE_DOC_AVAILABLE = True
+    from md2docx_python.src.md2docx_python import markdown_to_word
+    MD2DOCX_AVAILABLE = True
 except ImportError:
-    print("Spire.Doc.Free not available. Install with: pip install Spire.Doc.Free")
-    SPIRE_DOC_AVAILABLE = False
+    print("md2docx_python not available. Install with: pip install md2docx-python")
+    MD2DOCX_AVAILABLE = False
 
 # Import Azure storage modules
 try:
@@ -89,18 +87,12 @@ class ReportFilePlugin:
         Returns:
             str: JSON string with result information
         """
-        print(f"\n==== REPORT GENERATION STARTED ====")
-        print(f"Report length: {len(report_content)} characters")
-        print(f"Session ID: {session_id}")
-        print(f"Conversation ID: {conversation_id}")
-        print(f"Report title: {report_title}")
-        
         try:
-            # Check if Spire.Doc is available
-            if not SPIRE_DOC_AVAILABLE:
-                print("Spire.Doc.Free not available. Cannot generate Word document.")
+            # Check if md2docx is available
+            if not MD2DOCX_AVAILABLE:
+                print("md2docx_python not available. Cannot generate Word document.")
                 return json.dumps({
-                    "error": "Word document generation is not available. Spire.Doc.Free library is missing.",
+                    "error": "Word document generation is not available. md2docx_python library is missing.",
                     "success": False,
                     "stage": "initialization"
                 })
@@ -113,8 +105,8 @@ class ReportFilePlugin:
             
             # Print debug info
             print(f"Saving report to file: {docx_filepath}")
-            print(f"Report directory exists: {os.path.exists(self.report_directory)}")
-            print(f"Report directory is writable: {os.access(self.report_directory, os.W_OK)}")
+            print(f"Report content length: {len(report_content)} characters")
+            print(f"Report title: {report_title}")
             
             # First create a temporary markdown file
             temp_md_file = None
@@ -124,17 +116,10 @@ class ReportFilePlugin:
                     temp.write(report_content)
                     temp_md_file = temp.name
                     print(f"Created temporary markdown file: {temp_md_file}")
-                    print(f"Temp file exists: {os.path.exists(temp_md_file)}")
-                    print(f"Temp file size: {os.path.getsize(temp_md_file)} bytes")
                 
                 # Generate Word document with detailed error handling
-                print(f"Calling _generate_word_document...")
                 self._generate_word_document(temp_md_file, docx_filepath, report_title)
-                if os.path.exists(docx_filepath):
-                    print(f"Successfully generated Word document: {docx_filepath}")
-                    print(f"Word document size: {os.path.getsize(docx_filepath)} bytes")
-                else:
-                    print(f"WARNING: Word document not found after generation: {docx_filepath}")
+                print(f"Successfully generated Word document: {docx_filepath}")
             except Exception as word_error:
                 print(f"Error generating Word document: {word_error}")
                 traceback.print_exc()
@@ -147,7 +132,7 @@ class ReportFilePlugin:
                 # Clean up temporary markdown file
                 if temp_md_file and os.path.exists(temp_md_file):
                     try:
-                        #os.remove(temp_md_file)
+                        os.remove(temp_md_file)
                         print(f"Deleted temporary markdown file: {temp_md_file}")
                     except Exception as e:
                         print(f"Error deleting temporary markdown file: {e}")
@@ -156,7 +141,6 @@ class ReportFilePlugin:
             blob_url = None
             try:
                 if self.blob_service_client and AZURE_STORAGE_AVAILABLE:
-                    print(f"Uploading to data lake...")
                     blob_url = self._upload_to_data_lake(docx_filepath, docx_filename)
                     print(f"Successfully uploaded to data lake: {blob_url}")
                 else:
@@ -173,7 +157,6 @@ class ReportFilePlugin:
             
             # Log to database with detailed error handling
             try:
-                print(f"Logging report to database...")
                 self._log_report_to_database(session_id, conversation_id, docx_filename, blob_url)
                 print("Successfully logged report to database")
             except Exception as db_error:
@@ -182,7 +165,6 @@ class ReportFilePlugin:
                 # Continue anyway
             
             # Return success information
-            print(f"==== REPORT GENERATION COMPLETED SUCCESSFULLY ====\n")
             return json.dumps({
                 "success": True,
                 "filename": docx_filename,
@@ -196,7 +178,6 @@ class ReportFilePlugin:
         except Exception as e:
             print(f"Error in save_report_to_file: {e}")
             traceback.print_exc()
-            print(f"==== REPORT GENERATION FAILED ====\n")
             return json.dumps({
                 "error": str(e),
                 "success": False,
@@ -204,69 +185,33 @@ class ReportFilePlugin:
             })
     
     def _generate_word_document(self, markdown_filepath: str, docx_filepath: str, title: str = None):
-        """Generates a Word document from markdown using Spire.Doc.
+        """Generates a Word document from markdown.
         
         Args:
             markdown_filepath: Input markdown filepath
             docx_filepath: Output Word document filepath
             title: Optional report title
         """
-        # Check if Spire.Doc is available
-        if not SPIRE_DOC_AVAILABLE:
-            raise ImportError("Spire.Doc.Free is not available. Cannot generate Word document.")
+        # Check if md2docx_python is available
+        if not MD2DOCX_AVAILABLE:
+            raise ImportError("md2docx_python is not available. Cannot generate Word document.")
         
         # Print debug info
         print(f"Generating Word document: {docx_filepath}")
-        print(f"Using markdown file: {markdown_filepath}")
-        print(f"Markdown file exists: {os.path.exists(markdown_filepath)}")
-        print(f"Markdown file size: {os.path.getsize(markdown_filepath)} bytes")
         
         try:
-            print("Creating Document object...")
-            # Create a Document object
-            document = Document()
+            # Convert Markdown to Word document using md2docx_python
+            markdown_to_word(markdown_filepath, docx_filepath)
+            print(f"Successfully converted markdown to Word document: {docx_filepath}")
             
-            print(f"Loading markdown file...")
-            # Load the markdown file
-            document.LoadFromFile(markdown_filepath)
-            print("Successfully loaded markdown file")
-            
-            # Loop thorugh the sections of document
-            for i in range(document.Sections.Count):
-                # Get a section
-                section = document.Sections.get_Item(i)
-                # Get the margins of the section
-                margins = section.PageSetup.Margins
-                # Set the top, bottom, left, and right margins
-                margins.Top = 72.0
-                margins.Bottom = 72.0
-                margins.Left = 72.0
-                margins.Right = 72.0
-            
-            print(f"Saving document to file: {docx_filepath}")
-            # Save it as a DOCX file
-            document.SaveToFile(docx_filepath, FileFormat.Docx2016)
-            print(f"Successfully saved Word document: {docx_filepath}")
-            
-            print("Disposing document resources...")
-            # Dispose of resources
-            document.Dispose()
-            print("Document resources disposed")
-            
-            # Verify the file was created
-            if os.path.exists(docx_filepath):
-                print(f"Confirmed: Word document exists at {docx_filepath}")
-                print(f"File size: {os.path.getsize(docx_filepath)} bytes")
-            else:
-                print(f"WARNING: Word document not found after generation: {docx_filepath}")
+            # Additional processing or customization can be added here if needed
             
             return True
             
         except Exception as e:
-            print(f"Error generating Word document with Spire.Doc: {e}")
+            print(f"Error generating Word document: {e}")
             traceback.print_exc()
             raise
-            
     
     def _upload_to_data_lake(self, filepath: str, filename: str) -> str:
         """Uploads a file to Azure Data Lake Storage with improved error handling.
@@ -437,7 +382,6 @@ class ReportFilePlugin:
                 })
             
             # Extract relevant information and build the report
-            report_content = f"# Comprehensive Risk Report\n\n"
             report_content += f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
             
             # Add executive summary

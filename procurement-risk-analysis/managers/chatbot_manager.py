@@ -830,7 +830,7 @@ class ChatbotManager:
             2. Format the report professionally with clear sections
             3. If political risk data is available, include the complete political risk table
             4. Make sure tables are formatted properly with even column widths
-            5. Keep your tables simple enough to display well in PDF format
+            5. Keep your tables simple enough to display well in word format
             6. For political risks, directly quote from the political risk agent's analysis
             7. Include the file information block at the end
 
@@ -3133,7 +3133,7 @@ class ChatbotManager:
         # Ensure report starts with Comprehensive Risk Report if not already
         if not re.search(r'^\s*#\s*Comprehensive Risk Report', cleaned, re.MULTILINE):
             if "Executive Summary" in cleaned and not "Comprehensive Risk Report" in cleaned[:200]:
-                cleaned = "# Comprehensive Risk Report\n\n" + cleaned
+                cleaned = "\nHere the Comprehensive Risk Report to describe the risk\n\n" + cleaned
         
         return cleaned.strip()
 
