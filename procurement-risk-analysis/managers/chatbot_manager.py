@@ -36,6 +36,7 @@ from plugins.risk_plugin import RiskCalculationPlugin
 from plugins.logging_plugin import LoggingPlugin
 from plugins.report_file_plugin import ReportFilePlugin
 from plugins.political_risk_json_plugin import PoliticalRiskJsonPlugin
+from plugins.citation_handler_plugin import CitationLoggerPlugin
 
 # Load environment variables from .env file
 load_dotenv()
@@ -316,6 +317,7 @@ class ChatbotManager:
         
         # Create the political risk JSON plugin
         political_risk_json_plugin = PoliticalRiskJsonPlugin(self.connection_string)
+        citation_logger_plugin = CitationLoggerPlugin()
         
         # Create or reuse all agents
         agents = {}
@@ -366,7 +368,7 @@ class ChatbotManager:
             agent_name=POLITICAL_RISK_AGENT,
             model_deployment_name=ai_agent_settings.model_deployment_name,
             instructions=get_political_risk_agent_instructions(),
-            plugins=[political_logging, political_risk_json_plugin],  # Added the JSON plugin
+            plugins=[political_logging, political_risk_json_plugin, citation_logger_plugin],  # Added the JSON plugin
             connections=bing_connection
         )
 

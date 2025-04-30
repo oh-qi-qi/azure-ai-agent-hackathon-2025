@@ -157,7 +157,10 @@ with project_client:
         MessageRole.AGENT
     )
 
+    print("#####################################################")
     print (response_message)
+
+    print("#####################################################")
     if response_message:
         for text_message in response_message.text_messages:
             print(f"Agent response: {text_message.text.value}")

@@ -197,7 +197,12 @@ def main():
                 )
             except Exception as e:
                 print(f"ERROR: Failed to retrieve response message: {str(e)}")
-            
+
+            print("###############################")
+
+            print(response_message)
+
+            print("###############################")
             if response_message:
                 print("\n=== AGENT RESPONSE ===")
                 for text_message in response_message.text_messages:
