@@ -1,244 +1,204 @@
-# Procurement Risk Analysis System
+# RiskWise: Procurement Risk Analysis System
 
-A Python-based system for analyzing procurement risks using Azure AI Agents. The system processes equipment schedules and analyzes various risk factors such as political risks.
+## Overview
 
-## Features
+RiskWise is a multi-agent AI system that transforms how organizations manage equipment delivery risks across global supply chains. By leveraging Azure AI Projects and specialized AI agents, it delivers comprehensive risk assessment by analyzing:
 
-- **Multi-Agent Risk Analysis**: Utilizes specialized AI agents for different types of analysis:
-  - Assistant Agent
-  - Schedule Risk Analysis Agent
-  - Political Risk Analysis Agent
-  - Comprehensive Risk Reporting Agent
+- **Schedule variances** - Identifying delivery timeline risks
+- **Political factors** - Real-time geopolitical risk insights via Bing Search
+- **Tariff changes** - Monitoring trade policy impacts on procurement
+- **Logistics disruptions** - Tracking shipping and transportation challenges
 
-- **REST API**: FastAPI-based endpoints for integration
-- **Data Lake Integration**: Automatic report storage in Azure Data Lake
-- **Structured Logging**: Comprehensive logging system for agent interactions
-- **Dual Interface Mode**:
-  - User Mode: Production-ready Next.js frontend for end users
-  - Dev Mode: Streamlit-based interface for testing APIs and agent behaviors
+![System Architecture Diagram](docs/images/system_architecture.png)
 
-## Backend
+## Business Impact
 
-## Project Structure
+RiskWise solves critical business challenges by:
 
-```
-project/
-├── agents/ # Agent-related code
-│ ├── agent_definitions.py # Agent instructions and definitions
-│ ├── agent_strategies.py # Selection and termination strategies
-│ └── agent_manager.py # Agent creation and management
-├── plugins/ # Semantic Kernel plugins
-│ ├── schedule_plugin.py # Equipment schedule analysis
-│ ├── risk_plugin.py # Risk calculations
-│ ├── logging_plugin.py # Consolidated logging
-│ └── report_file_plugin.py # Report generation
-├── managers/ # System managers
-│ ├── chatbot_manager.py # Chat interaction handling
-│ ├── workflow_manager.py # Automated workflow management
-│ └── scheduler.py # Workflow scheduling
-├── api/ # API layer
-│ └── api_server.py # API endpoints
-├── config/ # Configuration
-│ └── settings.py # Application settings
-└── main.py # Application entry point
-```
+- **Preventing costly delays** - Proactively identify equipment delivery risks before they impact projects
+- **Providing early warning** - Get timely alerts on emerging political, tariff, and logistics issues
+- **Simplifying collaboration** - Create shareable, structured documentation for procurement teams
+- **Supporting data-driven decisions** - Make procurement choices backed by comprehensive risk analysis
+- **Reducing supply chain disruptions** - Address potential issues before they affect project timelines
 
-## Prerequisites
+## Key Features
 
-- Python 3.8+
-- Azure AI Projects account
-- Azure Storage account (for report storage)
+### Intelligent Multi-Agent Analysis
+- Specialized agents collaborate to deliver comprehensive risk assessment
+- Each agent focuses on specific risk domains (schedule, political, tariff, logistics)
+- Consolidated reporting synthesizes insights into actionable recommendations
+
+### Interactive Risk Analysis
+![Chat Interface 1](docs/images/chat_interface_1.png)
+![Chat Interface 2](docs/images/chat_interface_2.png)
+
+- Conversational interface for natural risk queries and analysis
+- Real-time political risk intelligence using Bing Search integration
+- Automatic calculation of schedule variances and risk levels
+- Detailed recommendations for risk mitigation
+
+### Professional Report Generation
+![Report Management](docs/images/report_management.png)
+
+- Automatically generate formatted Word documents with risk analysis
+- Store reports centrally in Azure Storage for easy access
+- Track report history and filter by project, equipment, or date
+- Share reports with stakeholders via secure download links
+
+### Advanced Visualization
+![Risk Visualizations](docs/images/risk_visualization.png)
+
+- Interactive heatmaps showing risk distribution by country
+- Schedule variance charts highlighting delivery timeline issues
+- Risk impact assessment matrices for severity understanding
+- Trend analysis to identify emerging risk patterns
+
+### Transparent AI Reasoning
+![Thinking Logs](docs/images/thinking_logs.png)
+
+- Complete visibility into AI decision processes
+- Verification of information sources with citation tracking
+- Comprehensive audit trail of system operations
+- Identify reasoning behind specific recommendations
+
+### Developer View via Streamlit
+![Developer View](docs/images/system_developer_1.png)
+![Developer View](docs/images/system_developer_2.png)
+![Developer View](docs/images/system_developer_3.png)
+![Developer View](docs/images/system_developer_4.png)
+- **System Testing Dashboard**: Interactive UI to validate Azure connections and database settings
+- **Environment Diagnostics**: Visual indicators for successful connection tests
+- **Error Visualization**: User-friendly display of system errors and troubleshooting guidance
+- **Session Management**: View active sessions and conversation IDs for debugging
+- **Thinking Log Explorer**: Interactive tool for examining agent reasoning in detail
+
+The Developer View is built directly into the Streamlit interface, providing a convenient way for developers to test, monitor, and troubleshoot the system without requiring separate tools or command-line access.
+
+## System Components
+![System Components Diagram](docs/images/system_components.png)
+
+The system consists of several interrelated components that work together to provide comprehensive risk analysis.
+
+## Azure Technologies Used
+
+- **Azure AI Agent Service** - Foundation for creating and orchestrating specialized agents
+- **Azure OpenAI Service** - Powerful language models driving intelligent analysis
+- **Grounding with Bing Search** - Real-time access to global events and political developments
+- **Azure Storage** - Secure document management and report storage
+- **Azure SQL Database** - Structured data storage and analytics capabilities
+
+## System Architecture
+
+The system follows a modular, multi-agent design pattern:
+
+### Agent Layer
+- **Scheduler Agent** - Processes equipment data, calculates variances, determines risk levels
+- **Political Risk Agent** - Identifies geopolitical factors affecting supply chains
+- **Reporting Agent** - Consolidates findings into structured, actionable reports
+- **Assistant Agent** - Manages conversation flow and user interaction
+
+### Manager Layer
+- **Chatbot Manager** - Orchestrates agent interaction for chat sessions
+
+### Plugin Layer
+- **Schedule Plugin** - Processes equipment schedule data
+- **Risk Plugin** - Performs calculation and categorization
+- **Logging Plugin** - Manages agent thinking and events
+- **Report File Plugin** - Generates Word documents and handles storage
+- **Citation Handler Plugin** - Tracks citations from Bing Search results
+
+### API & Interface Layer
+- **FastAPI Application** - RESTful endpoints for system integration
+- **Streamlit Interface** - Interactive user experience for developers during development
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.11
+- Azure AI Projects account with model deployment
 - SQL Server database
+- Azure Storage account (for report storage)
+- Bing Search API key (for political risk analysis)
 
-## Installation
-
-1. Clone the repository:
+### Installation
 
 ```bash
-git clone [repository-url]
+# Clone repository
+git clone https://github.com/yourusername/procurement-risk-analysis.git
 cd procurement-risk-analysis
-```
 
-2. Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-3. Set up environment variables:
-
-```bash
-# Create .env file
+# Create and activate virtual environment
 python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Install dependencies
+pip install -r backend/requirements.txt
 ```
 
-```bash
-source .venv/bin/activate
-```
+### Environment Setup
 
-#### Required variables
+Create a `.env` file with your configuration:
 
 ```
 AZURE_AI_AGENT_PROJECT_CONNECTION_STRING=your_connection_string
 AZURE_AI_AGENT_MODEL_DEPLOYMENT_NAME=your_model_deployment
 DB_CONNECTION_STRING=your_db_connection_string
 AZURE_STORAGE_CONNECTION_STRING=your_storage_connection_string
+BING_SEARCH_API_KEY=your_bing_api_key
 ```
-
-## Usage
 
 ### Running the Application
 
-1. Start the API server:
-
 ```bash
-python api/api_server.py
+# Start the API server
+cd backend
+python main.py
+
+# OR start the Streamlit interface
+streamlit run streamlit_app.py
 ```
-
-### API Endpoints
-
-- `POST /api/chat`: Process chat messages with session management
-
-- `GET /api/sessions`: Retrieve all chat sessions with conversation history
-
-- `GET /api/session-ids`: Get a list of session IDs with their first queries
-
-- `GET /api/sessions/{session_id}`: Get conversation history for a specific session
-
-- `GET /api/thinking-logs`: Get detailed agent thinking logs for all sessions
-
-- `GET /api/thinking-log-ids`: Get a simplified list of thinking log sessions
-
-- `GET /api/thinking-logs-by-session-id/{session_id}`: Get thinking logs for a specific session
-
-- `GET /api/heatmap`: Get risk heatmap in a choropleth data
-
-- `GET /api/reports`: Get a list of generated risk reports
-
-## Development
-
-### Adding New Agents
-
-1. Define agent instructions in `agents/agent_definitions.py`
-2. Create selection/termination strategies in `agents/agent_strategies.py`
-3. Register the agent in `managers/chatbot_manager.py`
-
-### Creating Plugins
-
-1. Create a new plugin class in the `plugins` directory
-2. Decorate methods with `@kernel_function`
-3. Register the plugin in relevant agent initialization
-
-## Error Handling
-
-The system includes comprehensive error handling and logging:
-
-- Agent interaction logs
-- Error tracking
-- Rate limiting protection
-- Automatic resource cleanup
-
-## Frontend
-
-### User Mode (Production Interface)
-
-The Next.js frontend provides a polished, production-ready interface for end users to interact with the procurement risk analysis system.
-
-## Tech Stack
-
-- **Framework**: Next.js with TypeScript
-- **Styling**: Tailwind CSS
-- **Package Manager**: npm
-- **Code Quality**: ESLint
-- **Development Tools**:
-  - PostCSS
-  - TypeScript configuration
-  - Next.js configuration
 
 ## Project Structure
 
 ```
-frontend/
-├── app/ # Next.js app directory (pages and routing)
-├── components/ # Reusable React components
-├── hooks/ # Custom React hooks
-├── lib/ # Utility functions and shared logic
-├── public/ # Static assets
-├── .next/ # Next.js build output
-├── node_modules/ # Dependencies
-├── tailwind.config.js # Tailwind CSS configuration
-├── tsconfig.json # TypeScript configuration
-├── next.config.ts # Next.js configuration
-├── postcss.config.mjs # PostCSS configuration
-├── package.json # Project dependencies and scripts
-└── eslint.config.mjs # ESLint configuration
+backend/
+├── agents/                    # Agent definitions and strategies
+├── api/                       # API components
+├── config/                    # Configuration components
+├── managers/                  # System managers
+├── plugins/                   # Semantic Kernel plugins
+├── utils/                     # Utility functions
+├── main.py                    # Application entry point
+├── streamlit_app.py           # Streamlit UI application
+└── requirements.txt           # Project dependencies
 ```
 
-## Prerequisites
+## Implementation Highlights
 
-- Node.js 18.x or higher
-- npm 9.x or higher
+This project was developed for the AI Agents Hackathon 2025 and features:
 
-## Installation
-
-1. Clone the repository:
-
-```bash
-git clone [repository-url]
-cd frontend
-```
-
-2. Install dependencies:
-
-```bash
-npm install
-```
-
-## Development
-
-To start the development server:
-
-```bash
-npm run dev
-```
-
-The application will be available at `http://localhost:3000`
-
-## Code Style and Quality
-
-This project uses:
-
-- ESLint for code quality
-- TypeScript for type safety
-- Prettier for code formatting (configured via ESLint)
-
-## Browser Support
-
-This application supports modern browsers including:
-
-- Chrome (latest)
-- Firefox (latest)
-- Safari (latest)
-- Edge (latest)
-
-#### Installation (Dev Mode)
-
-Run the Streamlit interface:
-
-```bash
-streamlit run streamlit_app.py
-```
-
-The development interface will be available at `http://localhost:8501`
-
-## Compatibility Notes
-
-- **Mac OS Compatibility**: For Mac OS systems with ARM architecture (Apple Silicon), Spire.Doc currently does not support direct installation. For non-ARM Mac OS systems, please download `Spire.Doc-12.7.1-py3-none-macosx_10_7_universal.whl` before proceeding with pip installation.
-
-## Dev Mode (Testing Interface)
-
-A Streamlit-based interface is available for developers to test APIs and agent behaviors during development.
+- **Agent Collaboration Framework** - Sophisticated orchestration allowing specialized agents to work together
+- **Thinking Transparency** - Comprehensive logging of agent reasoning for auditability
+- **Dynamic Instruction Management** - Agent instructions that adapt based on query type and context
+- **Fault Tolerance** - Resilient error recovery to maintain operation despite agent failures
 
 ## License
 
-[Your License Here]
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+```
+Copyright 2025 [Your Name/Organization]
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+```
