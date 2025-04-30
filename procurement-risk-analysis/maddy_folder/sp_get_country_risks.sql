@@ -20,11 +20,12 @@ BEGIN
     );
 
     -- Insert only when political_risks is not null
+    -- Extract and normalize political risks
     INSERT INTO @PoliticalRisks
     SELECT 
         dat.conversation_id,
         dat.session_id,
-        JSON_VALUE(pr.value, '$.country'),
+        TRIM(value_split.CountryName),  -- use split value here
         JSON_VALUE(pr.value, '$.political_type'),
         JSON_VALUE(pr.value, '$.risk_information'),
         TRY_CAST(JSON_VALUE(pr.value, '$.likelihood') AS INT),
@@ -34,11 +35,23 @@ BEGIN
         JSON_VALUE(pr.value, '$.citation_name'),
         JSON_VALUE(pr.value, '$.citation_url')
     FROM [dbo].[dim_agent_event_log] AS dat
-    CROSS APPLY OPENJSON(JSON_QUERY(dat.value, '$.political_risks')) AS pr
+    CROSS APPLY (
+        SELECT JSON_QUERY(dat.agent_output, '$.political_risks') AS risks
+    ) AS filtered
+    CROSS APPLY OPENJSON(filtered.risks) AS pr
+    OUTER APPLY (
+        -- Split country field by '-' and return each as a row
+        SELECT 
+            value AS CountryName
+        FROM STRING_SPLIT(
+            JSON_VALUE(pr.value, '$.country'),
+            '-'
+        )
+    ) AS value_split
     WHERE dat.[action] = 'Political Risk JSON Data'
-      AND JSON_QUERY(dat.value, '$.political_risks') IS NOT NULL
-      AND (@ConversationId IS NULL OR dat.conversation_id = @ConversationId)
-      AND (@SessionId IS NULL OR dat.session_id = @SessionId);
+    AND JSON_QUERY(dat.agent_output, '$.political_risks') IS NOT NULL
+    AND (@ConversationId IS NULL OR dat.conversation_id = @ConversationId)
+    AND (@SessionId IS NULL OR dat.session_id = @SessionId);
 
     DECLARE @CountrySummary TABLE (
         ConversationId NVARCHAR(255),
