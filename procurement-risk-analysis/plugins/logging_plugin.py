@@ -78,7 +78,7 @@ class LoggingPlugin:
                                 if threads_data and len(threads_data) > 0:
                                     thread_id = threads_data[0].get('id')
                             
-                            print(f"Thread ID: {thread_id}")
+                            print(f"Thread ID From Logging Plugin: {thread_id}")
                             
                             # Cache the thread ID for future use
                             if thread_id:
