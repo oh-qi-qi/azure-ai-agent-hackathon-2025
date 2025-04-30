@@ -17,14 +17,34 @@ By leveraging Azure AI Projects and specialized AI agents, it delivers comprehen
 
 ![System Architecture Diagram](docs/images/system_architecture_1.jpg)
 
-## Azure Technologies Used
+## Backend Technologies
 
-- **Azure AI Agent Service** - Foundation for creating and orchestrating specialized agents
-- **Azure OpenAI Service** - Powerful language models driving intelligent analysis
-- **Grounding with Bing Search** - Real-time access to global events and political developments
-- **Azure Storage** - Secure document management and report storage
-- **Azure SQL Database** - Structured data storage and analytics capabilities
+- **Azure AI Agent Service** – Foundation for orchestrating specialized multi-agent workflows in a modular architecture  
+- **Azure OpenAI Service** – Provides large language models for natural language understanding, reasoning, and content generation  
+- **Azure AI Foundry Playground** – Visual interface to test and prototype agent behaviors and workflows before deployment  
+- **Semantic Kernel** – Lightweight orchestration framework for integrating AI plugins and managing agent memory and context  
+- **Grounding with Bing Search** – Real-time web search grounding for up-to-date geopolitical and logistical risk insights  
+- **Azure Blob Storage** – Secure storage for generated reports, configuration files, and agent artifacts  
+- **Azure SQL Database** – Centralized, structured database for schedules, equipment metadata, and risk analysis results  
+- **FastAPI** – High-performance Python web framework for building APIs with automatic documentation  
+- **Streamlit** – Developer-focused interface for testing, monitoring, and debugging agent behavior in real time  
+- **Spire.Doc.Free** – Free library for creating and manipulating Word documents programmatically  
+- **PyODBC** – Python library for connecting to SQL Server databases  
 
+## Frontend Technologies
+
+- **React** – Frontend UI library used to build interactive, component-based interfaces  
+- **Next.js** – Full-stack React framework used for routing, API integration, and optimized frontend performance  
+- **Tailwind CSS** – Utility-first CSS framework for rapidly building custom designs without leaving HTML  
+- **Chart.js** – JavaScript charting library for data visualization  
+- **React Query** – Data fetching and state management library for React applications  
+
+## Development Tools
+
+- **Visual Studio Code** – Lightweight code editor with extensive plugin support  
+- **Postman** – API testing and documentation tool  
+- **Git** – Distributed version control system
+- 
 ## Business Impact
 
 RiskWise solves critical business challenges by:
