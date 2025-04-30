@@ -1,8 +1,7 @@
 # RiskWise: Procurement Risk Analysis System
-
+![RiskWise Logo](docs/images/riskwise_logo.png)
 ## Overview
-
-RiskWise is a multi-agent AI system that transforms how organizations manage equipment delivery risks across global supply chains. By leveraging Azure AI Projects and specialized AI agents, it delivers comprehensive risk assessment by analyzing:
+RiskWise is a proof-of-concept Agentic AI application built for today's volatile global landscape, designed to support expeditors with near real-time, explainable market and risk intelligence across global supply chains. Instead of replacing human decision-makers, RiskWise acts as an intelligent assistant — continuously monitoring geopolitical events, labor conditions, tariffs, and logistics disruptions to surface early warnings. Expeditors can ask natural language questions and receive structured, visual insights grounded in current data and verified sources. It is a multi-agent AI system that transforms how organizations manage equipment delivery risks across global supply chains. By leveraging Azure AI Projects and specialized AI agents, it delivers comprehensive risk assessment by analyzing:
 
 - **Schedule variances** - Identifying delivery timeline risks
 - **Political factors** - Real-time geopolitical risk insights via Bing Search
@@ -62,10 +61,10 @@ RiskWise solves critical business challenges by:
 - Identify reasoning behind specific recommendations
 
 ### Developer View via Streamlit
-![Developer View](docs/images/system_developer_1.png)
-![Developer View](docs/images/system_developer_2.png)
-![Developer View](docs/images/system_developer_3.png)
-![Developer View](docs/images/system_developer_4.png)
+![Developer View 1](docs/images/system_developer_1.png)
+![Developer View 2](docs/images/system_developer_2.png)
+![Developer View 3](docs/images/system_developer_3.png)
+![Developer View 4](docs/images/system_developer_4.png)
 - **System Testing Dashboard**: Interactive UI to validate Azure connections and database settings
 - **Environment Diagnostics**: Visual indicators for successful connection tests
 - **Error Visualization**: User-friendly display of system errors and troubleshooting guidance
@@ -160,15 +159,50 @@ streamlit run streamlit_app.py
 ```
 
 ## Project Structure
+```
+frontend/
+├── app/ # Next.js app directory (pages and routing)
+├── components/ # Reusable React components
+├── hooks/ # Custom React hooks
+├── lib/ # Utility functions and shared logic
+├── public/ # Static assets
+├── .next/ # Next.js build output
+├── node_modules/ # Dependencies
+├── tailwind.config.js # Tailwind CSS configuration
+├── tsconfig.json # TypeScript configuration
+├── next.config.ts # Next.js configuration
+├── postcss.config.mjs # PostCSS configuration
+├── package.json # Project dependencies and scripts
+└── eslint.config.mjs # ESLint configuration
+```
 
 ```
 backend/
 ├── agents/                    # Agent definitions and strategies
+│   ├── agent_definitions.py   # Instructions for each specialized agent
+│   ├── agent_manager.py       # Agent creation and management functions
+│   └── agent_strategies.py    # Selection and termination logic for agent groups
 ├── api/                       # API components
+│   ├── app.py                 # FastAPI application setup
+│   ├── endpoints.py           # API route definitions
+│   └── api_server.py          # Standalone API server
 ├── config/                    # Configuration components
+│   ├── settings.py            # Environment and application settings
+│   └── __init__.py            # Configuration module initialization
 ├── managers/                  # System managers
+│   ├── chatbot_manager.py     # Chat interaction handling
+│   ├── scheduler.py           # Workflow scheduling
+│   └── workflow_manager.py    # Automated workflow management
 ├── plugins/                   # Semantic Kernel plugins
+│   ├── citation_handler_plugin.py   # Citation extraction and formatting
+│   ├── logging_plugin.py            # Thinking and event logging
+│   ├── political_risk_json_plugin.py # Political risk data processing
+│   ├── report_file_plugin.py        # Report generation and storage
+│   ├── risk_plugin.py               # Risk calculation functions
+│   └── schedule_plugin.py           # Schedule data retrieval and processing
 ├── utils/                     # Utility functions
+│   ├── database_utils.py      # Database connection management
+│   └── thinking_log_viewer.py # Streamlit component for viewing agent thinking
 ├── main.py                    # Application entry point
 ├── streamlit_app.py           # Streamlit UI application
 └── requirements.txt           # Project dependencies
