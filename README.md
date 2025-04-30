@@ -1,6 +1,6 @@
 # RiskWise: Procurement Risk Analysis System
 <p align="center">
-  <img src="docs/images/riskwise_logo.png" alt="RiskWise Logo" height="200"/>
+  <img src="docs/images/riskwise_logo.png" alt="RiskWise Logo" height="200px">
 </p>
 
 ## Overview
