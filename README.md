@@ -71,7 +71,7 @@ RiskWise solves critical business challenges by:
 - Detailed recommendations for risk mitigation
 
 ### Professional Report Generation
-![Report Management](docs/images/report_management.png)
+![Report Management](docs/images/report_management_1.png)
 
 - Automatically generate formatted Word documents with risk analysis
 - Store reports centrally in Azure Storage for easy access
