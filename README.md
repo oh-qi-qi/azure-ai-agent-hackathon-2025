@@ -221,14 +221,6 @@ This application supports modern browsers including:
 - Safari (latest)
 - Edge (latest)
 
-## Compatibility Notes
-
-- **Mac OS Compatibility**: For Mac OS systems with ARM architecture (Apple Silicon), Spire.Doc currently does not support direct installation. For non-ARM Mac OS systems, please download `Spire.Doc-12.7.1-py3-none-macosx_10_7_universal.whl` before proceeding with pip installation.
-
-## Dev Mode (Testing Interface)
-
-A Streamlit-based interface is available for developers to test APIs and agent behaviors during development.
-
 #### Installation (Dev Mode)
 
 Run the Streamlit interface:
@@ -238,6 +230,14 @@ streamlit run streamlit_app.py
 ```
 
 The development interface will be available at `http://localhost:8501`
+
+## Compatibility Notes
+
+- **Mac OS Compatibility**: For Mac OS systems with ARM architecture (Apple Silicon), Spire.Doc currently does not support direct installation. For non-ARM Mac OS systems, please download `Spire.Doc-12.7.1-py3-none-macosx_10_7_universal.whl` before proceeding with pip installation.
+
+## Dev Mode (Testing Interface)
+
+A Streamlit-based interface is available for developers to test APIs and agent behaviors during development.
 
 ## License
 
