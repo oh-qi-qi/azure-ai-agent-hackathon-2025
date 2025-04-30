@@ -290,7 +290,7 @@ class ChatbotTerminationStrategy(TerminationStrategy):
         # Store all state in local instance variables to avoid Pydantic validation
         self._start_time = time.time()
         self._max_turns = 50
-        self._timeout_seconds = 360  # 6 minutes total timeout
+        self._timeout_seconds = 480  # 6 minutes total timeout
         self._agent_timeouts = {
             POLITICAL_RISK_AGENT: 300,  # 5 minutes for political risk agent
             TARIFF_RISK_AGENT: 300,     # 5 minutes for tariff risk agent

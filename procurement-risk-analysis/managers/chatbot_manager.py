@@ -1321,19 +1321,7 @@ class ChatbotManager:
         )
     
     async def _process_specific_risk_query(self, session, user_message, risk_type, conversation_id, session_id, original_message):
-        """Process a specific risk query with complete error handling and timeouts.
-        
-        Args:
-            session: The session data
-            user_message: The formatted user message
-            risk_type: The type of risk (agent name)
-            conversation_id: The conversation ID
-            session_id: The session ID
-            original_message: The original user message
-            
-        Returns:
-            dict: The response data
-        """
+        """Process a specific risk query with thread ID tracking."""
         print(f"Processing specific risk query: {risk_type}")
         
         # Get the chat and cancellation token
@@ -1342,6 +1330,15 @@ class ChatbotManager:
         
         # Dictionary to store latest responses from agents
         latest_responses = {}
+        
+        # Dictionary to store thread IDs
+        thread_ids = {}
+        
+        # Get initial thread ID
+        if self.logging_plugin:
+            initial_thread_id = self.logging_plugin.log_agent_get_thread_id()
+            thread_ids['initial'] = initial_thread_id
+            print(f"Initial thread ID: {initial_thread_id}")
         
         # Add the user message to the chat
         await chat.add_chat_message(user_message)
@@ -1353,6 +1350,12 @@ class ChatbotManager:
         try:
             # Step 1: Get scheduler response
             try:
+                # Get thread ID before scheduler response
+                if self.logging_plugin:
+                    scheduler_before_thread_id = self.logging_plugin.log_agent_get_thread_id()
+                    thread_ids['scheduler_before'] = scheduler_before_thread_id
+                    print(f"Thread ID before scheduler response: {scheduler_before_thread_id}")
+                
                 remaining_timeout = overall_timeout - (time.time() - start_time)
                 if remaining_timeout <= 0:
                     raise asyncio.TimeoutError("Overall process timeout exceeded")
@@ -1366,6 +1369,18 @@ class ChatbotManager:
                     ),
                     timeout=min(180, remaining_timeout)  # 3 minutes max or remaining time
                 )
+                
+                # Get thread ID after scheduler response
+                if self.logging_plugin:
+                    scheduler_after_thread_id = self.logging_plugin.log_agent_get_thread_id()
+                    thread_ids['scheduler_after'] = scheduler_after_thread_id
+                    print(f"Thread ID after scheduler response: {scheduler_after_thread_id}")
+                    
+                    # Store the scheduler thread ID in the session
+                    async with self._session_lock:
+                        if session_id in self.chat_sessions:
+                            self.chat_sessions[session_id]['scheduler_thread_id'] = scheduler_after_thread_id
+                            print(f"Stored scheduler thread ID in session: {scheduler_after_thread_id}")
             except asyncio.TimeoutError:
                 print("Timeout waiting for scheduler response")
                 scheduler_response = None
@@ -1398,6 +1413,12 @@ class ChatbotManager:
             
             # Step 3: Get risk agent response
             try:
+                # Get thread ID before risk agent response
+                if self.logging_plugin:
+                    risk_before_thread_id = self.logging_plugin.log_agent_get_thread_id()
+                    thread_ids['risk_before'] = risk_before_thread_id
+                    print(f"Thread ID before {risk_type} response: {risk_before_thread_id}")
+                
                 remaining_timeout = overall_timeout - (time.time() - start_time)
                 if remaining_timeout <= 0:
                     raise asyncio.TimeoutError("Overall process timeout exceeded")
@@ -1413,6 +1434,31 @@ class ChatbotManager:
                     ),
                     timeout=min(240, remaining_timeout)  # 4 minutes max or remaining time
                 )
+                
+                # Get thread ID after risk agent response
+                if self.logging_plugin:
+                    risk_after_thread_id = self.logging_plugin.log_agent_get_thread_id()
+                    thread_ids['risk_after'] = risk_after_thread_id
+                    print(f"Thread ID after {risk_type} response: {risk_after_thread_id}")
+                    
+                    # CRITICAL: Store the risk thread ID for later use
+                    async with self._session_lock:
+                        if session_id in self.chat_sessions:
+                            self.chat_sessions[session_id][f'{risk_type}_thread_id'] = risk_after_thread_id
+                            print(f"Stored {risk_type} thread ID in session: {risk_after_thread_id}")
+                    
+                    # CRITICAL: Write thread ID to a file for debugging
+                    try:
+                        if risk_type == POLITICAL_RISK_AGENT:
+                            with open("political_thread_id.txt", "w") as f:
+                                f.write(f"Political Risk Thread ID: {risk_after_thread_id}\n")
+                                f.write(f"Session ID: {session_id}\n")
+                                f.write(f"Conversation ID: {conversation_id}\n")
+                                f.write(f"Timestamp: {datetime.now().isoformat()}\n")
+                            print(f"Wrote political risk thread ID to file: {risk_after_thread_id}")
+                    except Exception as file_error:
+                        print(f"Error writing thread ID to file: {file_error}")
+                    
             except asyncio.TimeoutError:
                 print(f"Timeout waiting for {risk_type} response")
                 risk_agent_response = None
@@ -1428,26 +1474,52 @@ class ChatbotManager:
                     "conversation_id": conversation_id
                 }
             
-            # Step 4: Get reporting agent response
+            # Step 4: Get reporting agent response (with thread ID context)
             try:
+                # Get thread ID before reporting agent response
+                if self.logging_plugin:
+                    reporting_before_thread_id = self.logging_plugin.log_agent_get_thread_id()
+                    thread_ids['reporting_before'] = reporting_before_thread_id
+                    print(f"Thread ID before reporting agent response: {reporting_before_thread_id}")
+                
                 remaining_timeout = overall_timeout - (time.time() - start_time)
                 if remaining_timeout <= 0:
                     raise asyncio.TimeoutError("Overall process timeout exceeded")
                     
+                # Create extra context for the reporting agent with thread IDs
+                thread_context = {
+                    'risk_type': risk_type,
+                    'thread_ids': thread_ids,
+                }
+                
                 reporting_response = await asyncio.wait_for(
                     self._get_reporting_agent_response(
                         chat, 
                         risk_type, 
                         latest_responses, 
                         session_id, 
-                        cancellation_token
+                        cancellation_token,
+                        thread_context  # Pass the thread context
                     ),
                     timeout=min(180, remaining_timeout)  # 3 minutes max or remaining time
                 )
+                
+                # Get thread ID after reporting agent response
+                if self.logging_plugin:
+                    reporting_after_thread_id = self.logging_plugin.log_agent_get_thread_id()
+                    thread_ids['reporting_after'] = reporting_after_thread_id
+                    print(f"Thread ID after reporting agent response: {reporting_after_thread_id}")
+                    
+                    # Store the reporting thread ID
+                    async with self._session_lock:
+                        if session_id in self.chat_sessions:
+                            self.chat_sessions[session_id]['reporting_thread_id'] = reporting_after_thread_id
+                            print(f"Stored reporting thread ID in session: {reporting_after_thread_id}")
+                    
             except asyncio.TimeoutError:
                 print("Timeout waiting for reporting agent response")
                 reporting_response = None
-                
+                    
                 # Try direct report generation
                 try:
                     print("Attempting direct report generation after timeout")
@@ -1457,7 +1529,8 @@ class ChatbotManager:
                         latest_responses, 
                         conversation_id, 
                         session_id, 
-                        original_message
+                        original_message,
+                        thread_ids  # Pass thread IDs
                     )
                     
                     if not direct_success:
@@ -1472,7 +1545,8 @@ class ChatbotManager:
                                 latest_responses, 
                                 conversation_id, 
                                 session_id, 
-                                original_message
+                                original_message,
+                                thread_ids  # Pass thread IDs
                             )
                             
                             if not emergency_success:
@@ -1496,7 +1570,8 @@ class ChatbotManager:
                         latest_responses, 
                         conversation_id, 
                         session_id, 
-                        original_message
+                        original_message,
+                        thread_ids  # Pass thread IDs
                     )
                     
                     if not direct_success:
@@ -1553,7 +1628,7 @@ class ChatbotManager:
                     "error": f"Failed to process risk query: {str(e)}",
                     "conversation_id": conversation_id
                 }
-    
+
     async def force_report_generation(self, session, risk_type, latest_responses, conversation_id, session_id, original_message):
         """Force the reporting agent to generate a report when the normal flow hangs.
         
@@ -2089,8 +2164,8 @@ class ChatbotManager:
         
         return None
 
-    async def _get_reporting_agent_response(self, chat, risk_type, latest_responses, session_id, cancellation_token):
-        """Get the reporting agent's response and store it in the event log with improved error handling.
+    async def _get_reporting_agent_response(self, chat, risk_type, latest_responses, session_id, cancellation_token, thread_context=None):
+        """Get the reporting agent's response with thread ID context.
         
         Args:
             chat: The chat object
@@ -2098,6 +2173,7 @@ class ChatbotManager:
             latest_responses: Dictionary to store the latest responses
             session_id: The session ID
             cancellation_token: Cancellation token
+            thread_context: Optional dictionary with thread IDs and context
             
         Returns:
             The reporting agent response or None if timeout/error
@@ -2109,6 +2185,40 @@ class ChatbotManager:
         if hasattr(chat, '_current_chat_complete') and chat._current_chat_complete:
             print("Reset chat complete state before reporting agent")
             chat._current_chat_complete = False
+        
+        # Get political risk thread ID
+        political_risk_thread_id = None
+        
+        # Try to get from thread_context first
+        if thread_context and 'thread_ids' in thread_context:
+            thread_ids = thread_context['thread_ids']
+            if 'risk_after' in thread_ids and thread_context.get('risk_type') == POLITICAL_RISK_AGENT:
+                political_risk_thread_id = thread_ids['risk_after']
+                print(f"Got political risk thread ID from context: {political_risk_thread_id}")
+        
+        # If not in context, try to get from session
+        if not political_risk_thread_id:
+            try:
+                async with self._session_lock:
+                    if session_id in self.chat_sessions:
+                        political_risk_thread_id = self.chat_sessions[session_id].get(f'{POLITICAL_RISK_AGENT}_thread_id')
+                        if political_risk_thread_id:
+                            print(f"Got political risk thread ID from session: {political_risk_thread_id}")
+            except Exception as e:
+                print(f"Error getting political risk thread ID from session: {e}")
+        
+        # If still not found, try to read from file
+        if not political_risk_thread_id:
+            try:
+                if os.path.exists("political_thread_id.txt"):
+                    with open("political_thread_id.txt", "r") as f:
+                        for line in f:
+                            if line.startswith("Political Risk Thread ID:"):
+                                political_risk_thread_id = line.split(":", 1)[1].strip()
+                                print(f"Got political risk thread ID from file: {political_risk_thread_id}")
+                                break
+            except Exception as e:
+                print(f"Error reading political risk thread ID from file: {e}")
         
         # Get political risk data from the event log if available
         political_risk_data = None
@@ -2148,6 +2258,20 @@ class ChatbotManager:
         additional_context = ""
         if political_risk_data:
             additional_context = "\n\nAdditional political risk data is available in the database and has been logged for reference."
+            
+            # Add explicit thread ID information if available
+            if political_risk_thread_id:
+                additional_context += f"\n\nIMPORTANT: Use thread_id: {political_risk_thread_id} for any citations you need to reference."
+                additional_context += f"\n\nCRITICAL: When saving the report, ensure you call save_report_to_file and parse the result correctly:"
+                additional_context += f"\n\n```python"
+                additional_context += f"\nresult = save_report_to_file(report_content, session_id, conversation_id, 'Comprehensive Equipment Schedule Risk Analysis')"
+                additional_context += f"\nimport json"
+                additional_context += f"\nfile_info = json.loads(result)"
+                additional_context += f"\nfilename = file_info.get('filename', 'report.docx')"
+                additional_context += f"\nblob_url = file_info.get('blob_url', 'No URL available')"
+                additional_context += f"\nreport_id = file_info.get('report_id', 'No ID available')"
+                additional_context += f"\n```"
+                additional_context += f"\n\nThen include these ACTUAL values in your response, NOT placeholders."
         
         # Create a message from the risk agent to the reporting agent
         reporting_agent_message = ""
