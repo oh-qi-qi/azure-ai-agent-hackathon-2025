@@ -141,6 +141,12 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 pip install -r backend/requirements.txt
 ```
 
+User Mode: 
+```bash
+cd frontend/
+npm install
+```
+
 ### Environment Setup
 
 Create a `.env` file with your configuration:
@@ -154,13 +160,23 @@ BING_SEARCH_API_KEY=your_bing_api_key
 ```
 
 ### Running the Application
-
+User Mode: 
 ```bash
-# Start the API server
-cd backend
-python main.py
+cd frontend/
+npm run dev
+```
 
-# OR start the Streamlit interface
+Run the FastAPI server:
+```bash
+cd api/
+python api_server.py
+```
+
+Dev Mode:
+```bash
+cd backend/
+
+# start the Streamlit interface
 streamlit run streamlit_app.py
 ```
 
