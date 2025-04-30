@@ -36,8 +36,7 @@ By leveraging Azure AI Projects and specialized AI agents, it delivers comprehen
 - **React** – Frontend UI library used to build interactive, component-based interfaces  
 - **Next.js** – Full-stack React framework used for routing, API integration, and optimized frontend performance  
 - **Tailwind CSS** – Utility-first CSS framework for rapidly building custom designs without leaving HTML  
-- **Chart.js** – JavaScript charting library for data visualization  
-- **React Query** – Data fetching and state management library for React applications  
+- **React Simple Maps** – JavaScript charting library for data visualization
 
 ## Development Tools
 
