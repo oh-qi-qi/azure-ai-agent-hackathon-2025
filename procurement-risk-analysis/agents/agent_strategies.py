@@ -245,46 +245,21 @@ class ChatbotSelectionStrategy(SequentialSelectionStrategy):
                 print("WARNING: Reporting agent not found, terminating")
                 return None
         
-        # After a specific risk agent, check if response is substantial enough
+        # After a specific risk agent, ALWAYS go to reporting agent
         if last_agent in [POLITICAL_RISK_AGENT, TARIFF_RISK_AGENT, LOGISTICS_RISK_AGENT]:
-            # Check if the response is substantial enough
-            risk_agent_content = None
-            for msg in history:
-                if hasattr(msg, 'name') and msg.name == last_agent:
-                    risk_agent_content = msg.content
-                    break
+            print(f"{last_agent} has responded, selecting reporting agent next")
             
-            # Define minimum content length for a complete response
-            min_content_length = 2000  # Characters
+            # Wait briefly to ensure the risk agent has fully completed
+            await asyncio.sleep(5)
             
-            # Check if content looks like a full risk analysis or just a partial/interim message
-            is_partial = False
-            if risk_agent_content:
-                is_partial = (
-                    len(risk_agent_content) < min_content_length or
-                    "Creating report based on available data" in risk_agent_content or
-                    "analyzing" in risk_agent_content.lower() or
-                    "searching" in risk_agent_content.lower() or
-                    "will provide" in risk_agent_content.lower()
-                )
-            
-            # Only proceed to reporting agent if we have substantial content
-            if risk_agent_content and not is_partial:
-                print(f"{last_agent} has provided substantial content, selecting REPORTING_AGENT next")
-                
-                # Wait briefly to ensure the risk agent has fully completed
-                await asyncio.sleep(2)
-                
-                reporting_agent = next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
-                if reporting_agent:
-                    print(f"Successfully found reporting agent after {last_agent}")
-                    return reporting_agent
-                else:
-                    print(f"WARNING: Could not find REPORTING_AGENT after {last_agent}, returning None to terminate")
-                    return None
+            # Try to get the reporting agent
+            reporting_agent = next((agent for agent in agents if agent.name == REPORTING_AGENT), None)
+            if reporting_agent:
+                print(f"Successfully found reporting agent after {last_agent}")
+                return reporting_agent
             else:
-                print(f"{last_agent} content not substantial enough ({0 if not risk_agent_content else len(risk_agent_content)} chars), continuing with same agent")
-                return next((agent for agent in agents if agent.name == last_agent), None)
+                print(f"WARNING: Could not find REPORTING_AGENT after {last_agent}, returning None to terminate")
+                return None
         
         # After reporting agent, terminate
         if last_agent == REPORTING_AGENT:
