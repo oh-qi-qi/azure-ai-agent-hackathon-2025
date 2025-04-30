@@ -15,7 +15,7 @@ By leveraging Azure AI Projects and specialized AI agents, it delivers comprehen
 - **Tariff changes** - Monitoring trade policy impacts on procurement
 - **Logistics disruptions** - Tracking shipping and transportation challenges
 
-![System Architecture Diagram](docs/images/system_architecture.png)
+![System Architecture Diagram](docs/images/system_architecture_1.jpg)
 
 ## Business Impact
 
@@ -81,7 +81,7 @@ RiskWise solves critical business challenges by:
 The Developer View is built directly into the Streamlit interface, providing a convenient way for developers to test, monitor, and troubleshoot the system without requiring separate tools or command-line access.
 
 ## System Components
-![System Components Diagram](docs/images/system_components.png)
+![System Components Diagram](docs/images/system_components_1.jpg)
 
 The system consists of several interrelated components that work together to provide comprehensive risk analysis.
 
@@ -131,8 +131,7 @@ The system follows a modular, multi-agent design pattern:
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/procurement-risk-analysis.git
-cd procurement-risk-analysis
+git clone https://github.com/yourusername/azure-ai-agent-hackathon-2025.git
 
 # Create and activate virtual environment
 python -m venv .venv
