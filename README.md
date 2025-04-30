@@ -80,6 +80,7 @@ RiskWise solves critical business challenges by:
 - Share reports with stakeholders via secure download links
 
 ### Advanced Visualization
+![Risk Visualizations](docs/images/risk_visualization_1.gif)
 ![Risk Visualizations](docs/images/risk_visualization.png)
 
 - Interactive heatmaps showing risk distribution by country
@@ -88,6 +89,7 @@ RiskWise solves critical business challenges by:
 - Trend analysis to identify emerging risk patterns
 
 ### Transparent AI Reasoning
+![Thinking Logs](docs/images/thinking_logs_1.gif)
 ![Thinking Logs](docs/images/thinking_logs.png)
 
 - Complete visibility into AI decision processes
