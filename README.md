@@ -13,6 +13,9 @@ A Python-based system for analyzing procurement risks using Azure AI Agents. The
 - **REST API**: FastAPI-based endpoints for integration
 - **Data Lake Integration**: Automatic report storage in Azure Data Lake
 - **Structured Logging**: Comprehensive logging system for agent interactions
+- **Dual Interface Mode**:
+  - User Mode: Production-ready Next.js frontend for end users
+  - Dev Mode: Streamlit-based interface for testing APIs and agent behaviors
 
 ## Backend
 
@@ -137,6 +140,10 @@ The system includes comprehensive error handling and logging:
 
 ## Frontend
 
+### User Mode (Production Interface)
+
+The Next.js frontend provides a polished, production-ready interface for end users to interact with the procurement risk analysis system.
+
 ## Tech Stack
 
 - **Framework**: Next.js with TypeScript
@@ -151,7 +158,7 @@ The system includes comprehensive error handling and logging:
 ## Project Structure
 
 ```
-procurement-risk-analysis-app/
+frontend/
 ├── app/ # Next.js app directory (pages and routing)
 ├── components/ # Reusable React components
 ├── hooks/ # Custom React hooks
@@ -178,7 +185,7 @@ procurement-risk-analysis-app/
 
 ```bash
 git clone [repository-url]
-cd procurement-risk-analysis-app
+cd frontend
 ```
 
 2. Install dependencies:
@@ -214,6 +221,32 @@ This application supports modern browsers including:
 - Safari (latest)
 - Edge (latest)
 
+## Limitations
+
+- **Mac OS Compatibility**: For Mac OS systems with ARM architecture (Apple Silicon), Spire.Doc currently does not support direct installation. For non-ARM Mac OS systems, please download `Spire.Doc-12.7.1-py3-none-macosx_10_7_universal.whl` before proceeding with pip installation.
+
 ## License
 
 [Your License Here]
+
+### Dev Mode (Testing Interface)
+
+A Streamlit-based interface is available for developers to test APIs and agent behaviors during development.
+
+#### Installation (Dev Mode)
+
+Run the Streamlit interface:
+
+```bash
+streamlit run streamlit_app.py
+```
+
+The development interface will be available at `http://localhost:8501`
+
+#### Dev Mode Features
+
+- Direct API endpoint testing
+- Real-time agent behavior monitoring
+- Response visualization tools
+- Debug logging interface
+- Agent interaction testing
