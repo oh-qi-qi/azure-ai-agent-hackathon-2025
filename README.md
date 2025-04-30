@@ -1,5 +1,8 @@
 # RiskWise: Procurement Risk Analysis System
-![RiskWise Logo](docs/images/riskwise_logo.png)
+<p align="center">
+  <img src="docs/images/riskwise_logo.png" alt="RiskWise Logo" height="200"/>
+</p>
+
 ## Overview
 RiskWise is a proof-of-concept Agentic AI application built for today's volatile global landscape, designed to support expeditors with near real-time, explainable market and risk intelligence across global supply chains. Instead of replacing human decision-makers, RiskWise acts as an intelligent assistant — continuously monitoring geopolitical events, labor conditions, tariffs, and logistics disruptions to surface early warnings. Expeditors can ask natural language questions and receive structured, visual insights grounded in current data and verified sources. It is a multi-agent AI system that transforms how organizations manage equipment delivery risks across global supply chains. By leveraging Azure AI Projects and specialized AI agents, it delivers comprehensive risk assessment by analyzing:
 
