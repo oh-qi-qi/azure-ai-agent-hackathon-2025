@@ -15,6 +15,102 @@ By leveraging Azure AI Projects and specialized AI agents, it delivers comprehen
 - **Tariff changes** - Monitoring trade policy impacts on procurement
 - **Logistics disruptions** - Tracking shipping and transportation challenges
 
+## Semantic Kernel Multi-Agent Flow
+
+This section outlines the agent triggering and flow orchestration based on natural language queries in the Equipment Schedule Risk system.
+
+### Agent Definitions
+
+- **ASSISTANT_AGENT**: Handles general queries, greetings, and fallback responses.
+- **SCHEDULER_AGENT**: Analyzes equipment schedule data and calculates delivery risks.
+- **POLITICAL_RISK_AGENT**: Evaluates political risks based on manufacturing/project countries using Bing Search.
+- **REPORTING_AGENT**: Synthesizes insights from other agents into a comprehensive report.
+
+---
+
+### Selection Strategy & Agent Flow
+
+The system uses `ChatbotSelectionStrategy` and `ChatbotTerminationStrategy` to determine which agent responds next and when to end the conversation.
+
+#### 1. General Queries and Greetings
+
+**Example**: `"Hello, can you help me?"`
+
+**Flow**:
+```
+User Query → ASSISTANT_AGENT → End Conversation
+```
+
+When a general query is detected:
+1. `ChatbotSelectionStrategy` analyzes the message and routes to ASSISTANT_AGENT
+2. ASSISTANT_AGENT provides a helpful response
+3. `ChatbotTerminationStrategy` ends the conversation after the assistant responds
+
+---
+
+#### 2. Schedule Risk Queries
+
+**Example**: `"What are the schedule risks?"`
+
+**Flow**:
+```
+User Query → SCHEDULER_AGENT → REPORTING_AGENT → End Conversation
+```
+
+When schedule risk is requested:
+1. `ChatbotSelectionStrategy` identifies a schedule-specific query
+2. SCHEDULER_AGENT calculates risk percentages and categorizes equipment items
+3. SCHEDULER_AGENT output is automatically passed to REPORTING_AGENT
+4. REPORTING_AGENT formats the analysis into a comprehensive report
+5. Conversation ends after reporting completes
+
+---
+
+#### 3. Political Risk Queries
+
+**Example**: `"What are the political risks?"`
+
+**Flow**:
+```
+User Query → SCHEDULER_AGENT → POLITICAL_RISK_AGENT → REPORTING_AGENT → End Conversation
+```
+
+For political risk analysis:
+1. `ChatbotSelectionStrategy` routes first to SCHEDULER_AGENT for context
+2. SCHEDULER_AGENT extracts country data and equipment information
+3. This structured data is formatted as JSON and passed to POLITICAL_RISK_AGENT
+4. POLITICAL_RISK_AGENT performs Bing searches for relevant political news
+5. POLITICAL_RISK_AGENT analyzes results and provides risk assessment with citations
+6. REPORTING_AGENT combines schedule and political data into a final report
+7. Conversation ends after the report is delivered
+
+---
+
+### Technical Implementation Details
+
+- **Thread Management**: The system tracks conversation threads to maintain context
+- **Rate Limiting**: `RateLimitedExecutor` prevents overloading external services
+- **Error Handling**: Includes retry logic and fallback mechanisms
+- **Thinking Process Logging**: Each agent logs reasoning steps using `log_agent_thinking`
+- **Timeout Controls**: Agents have individual and overall timeouts to prevent hanging
+
+---
+
+### Agent Message Processing
+
+```
+User Message → ChatbotManager.process_message() → _analyze_query_type() → _process_specific_risk_query() or _process_standard_query()
+```
+
+The system:
+1. Analyzes query intent using keyword detection
+2. Selects appropriate agent sequence based on query type
+3. Manages conversation flow between agents
+4. Handles error conditions and timeouts
+5. Returns final agent response to user
+
+This agent architecture enables specialized risk analysis while maintaining a cohesive conversation flow, allowing each agent to focus on its area of expertise.
+
 ![System Architecture Diagram](docs/images/system_architecture_1.jpg)
 
 ## Backend Technologies
