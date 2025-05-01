@@ -134,6 +134,27 @@ The system consists of several interrelated components that work together to pro
 - **FastAPI Application** - RESTful endpoints for system integration
 - **Streamlit Interface** - Interactive user experience for developers during development
 
+## Responsible AI Components in RiskWise
+
+RiskWise incorporates several Responsible AI features to ensure transparency, accountability, and user trust in its supply chain risk assessment workflows:
+
+- **Transparent Reasoning Process**  
+  Logs each step of the AI reasoning pipeline (e.g., `risk_calculation`, `categorization`, `analysis_start`) with timestamps. This allows users to trace how each conclusion is reached.
+
+- **Visual Explainability**  
+  Uses color-coded risk levels (1–5 scale) and a global map to visualize geographic risk distribution. This simplifies complex information into intuitive visual cues for fast interpretation.
+
+- **Interactive Exploration**  
+  Provides expandable "Show Output" sections and interactive map elements to let users explore regional details and understand the reasoning behind risk ratings.
+
+- **Structured Agent Reasoning**  
+  Maintains a clear separation between each agent’s reasoning steps and its final conclusions. Intermediate steps are logged and auditable for transparency and reproducibility.
+
+- **Decision Criteria Transparency**  
+  Clearly documents how each risk is calculated and categorized, including threshold values and logic. This ensures users can understand and verify all recommendations.
+
+These Responsible AI practices enhance user confidence in RiskWise's assessments and support ethical, auditable AI deployment in critical decision-making scenarios.
+
 ## Quick Start
 
 ### Prerequisites
