@@ -26,8 +26,6 @@ This section outlines the agent triggering and flow orchestration based on natur
 - **POLITICAL_RISK_AGENT**: Evaluates political risks based on manufacturing/project countries using Bing Search.
 - **REPORTING_AGENT**: Synthesizes insights from other agents into a comprehensive report.
 
----
-
 ### Selection Strategy & Agent Flow
 
 The system uses `ChatbotSelectionStrategy` and `ChatbotTerminationStrategy` to determine which agent responds next and when to end the conversation.
@@ -46,8 +44,6 @@ When a general query is detected:
 2. ASSISTANT_AGENT provides a helpful response
 3. `ChatbotTerminationStrategy` ends the conversation after the assistant responds
 
----
-
 #### 2. Schedule Risk Queries
 
 **Example**: `"What are the schedule risks?"`
@@ -64,7 +60,6 @@ When schedule risk is requested:
 4. REPORTING_AGENT formats the analysis into a comprehensive report
 5. Conversation ends after reporting completes
 
----
 
 #### 3. Political Risk Queries
 
@@ -84,7 +79,6 @@ For political risk analysis:
 6. REPORTING_AGENT combines schedule and political data into a final report
 7. Conversation ends after the report is delivered
 
----
 
 ### Technical Implementation Details
 
@@ -94,7 +88,6 @@ For political risk analysis:
 - **Thinking Process Logging**: Each agent logs reasoning steps using `log_agent_thinking`
 - **Timeout Controls**: Agents have individual and overall timeouts to prevent hanging
 
----
 
 ### Agent Message Processing
 
